@@ -13,10 +13,24 @@ const TYPES = ['federal', 'governor', 'state house', 'state senate', 'county', '
 
 const H = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
 
-const get = async (p) => {
-  const r = await fetch(BASE + p, { headers: H });
-  if (!r.ok) throw new Error(r.status + ' ' + p);
-  return r.json();
+// Helper fetch function with automatic retry logic for 502/500 rate-limit errors
+const get = async (p, retries = 3) => {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const r = await fetch(BASE + p, { headers: H });
+      if (r.ok) return await r.json();
+      
+      // Retry on transient server error codes (502 Bad Gateway, 500, 429 Rate Limit)
+      if (r.status === 502 || r.status === 500 || r.status === 429) {
+        await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
+        continue;
+      }
+      throw new Error(r.status + ' ' + p);
+    } catch (e) {
+      if (attempt === retries - 1) throw e;
+      await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
+    }
+  }
 };
 
 const list = (x) => (x == null ? [] : Array.isArray(x) ? x : typeof x === 'object' ? Object.values(x) : []);
@@ -33,6 +47,7 @@ const q = new URLSearchParams({ startDate: DAY, endDate: DAY, country: 'US', pro
 const raw = await get('race/search?' + q);
 const all = Array.isArray(raw) ? raw : list(Object.values(raw).find(Array.isArray));
 
+// Filter to capture all federal marquee races (US Senate, US House, Governor) + all KY county elections
 const picked = all
   .filter((r) => String(r.election_date ?? '').slice(0, 10) === DAY)
   .filter(
@@ -62,11 +77,11 @@ const one = async (m) => {
     const regReporting = num(g.percent_reporting) || 0;
     const regTotalVotes = candsList.reduce((acc, c) => acc + (c.v || 0), 0);
     
-    // Estimate expected votes based on reporting percentage or registered voters
+    // Estimate expected votes based on registered voters or turnout reporting ratio
     const regVoters = num(g.registered_voters);
     let expectedVotes = regVoters ? Math.round(regVoters * 0.65) : null;
     if (!expectedVotes && regReporting > 0) {
-      expectedVotes = Math.round((regTotalVotes / (regReporting / 100)));
+      expectedVotes = Math.round(regTotalVotes / (regReporting / 100));
     }
 
     return {
@@ -125,8 +140,9 @@ const one = async (m) => {
 const races = [];
 let failed = 0, i = 0;
 
+// Lower batch concurrency from 8 down to 3 workers with 50ms gaps between fetches to prevent HTTP 502 rate-limiting
 await Promise.all(
-  Array.from({ length: 8 }, async () => {
+  Array.from({ length: 3 }, async () => {
     while (i < picked.length) {
       const m = picked[i++];
       try {
@@ -135,6 +151,7 @@ await Promise.all(
         failed++;
         console.warn('skip', m.id, e.message);
       }
+      await new Promise((res) => setTimeout(res, 50));
     }
   })
 );
