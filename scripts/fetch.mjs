@@ -110,7 +110,9 @@ const one = async (m) => {
 
   if (!shapeLogged && entries(d.region_results).length) {
     shapeLogged = true;
-    const [k0, v0] = entries(d.region_results)[0](https://citation-placeholder);
+    const firstRegion = entries(d.region_results).at(0);
+    const k0 = firstRegion.at(0);
+    const v0 = firstRegion.at(1);
     console.log(`region_results shape (race ${m.id}): key="${k0}" fields=${Object.keys(v0 || {}).join(',')}`);
   }
 
