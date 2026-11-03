@@ -19,7 +19,7 @@ const get = async (p, retries = 3) => {
     try {
       const r = await fetch(BASE + p, { headers: H });
       if (r.ok) return await r.json();
-      
+
       // Retry on transient server error codes (502 Bad Gateway, 500, 429 Rate Limit)
       if (r.status === 502 || r.status === 500 || r.status === 429) {
         await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
@@ -45,7 +45,7 @@ const any = (t, terms) => terms.some((k) => t.includes(k));
 
 const q = new URLSearchParams({ startDate: DAY, endDate: DAY, country: 'US', province: 'KY', limit: '50000' });
 const raw = await get('race/search?' + q);
-const all = Array.isArray(raw) ? raw : list(Object.values(raw).find(Array.isArray));
+const all = Array.isArray(raw) ? raw : list(Object.values(raw || {}).find(Array.isArray));
 
 // Filter to capture all federal marquee races (US Senate, US House, Governor) + all KY county elections
 const picked = all
@@ -60,33 +60,34 @@ const picked = all
 console.log(`search: ${all.length} total found, ${picked.length} selected for processing`);
 
 const mc = (c) => ({
-  n: c.name,
-  p: c.party,
-  w: Boolean(c.winner || c.is_winner),
-  col: c.color,
-  v: num(c.votes),
-  pc: num(c.percent)
+  n: c?.name,
+  p: c?.party,
+  w: Boolean(c?.winner || c?.is_winner),
+  col: c?.color,
+  v: num(c?.votes),
+  pc: num(c?.percent)
 });
 
 const one = async (m) => {
-  const d = await get('race/' + m.id);
+  // Ensure 'd' safely defaults to an empty object if 'get' returns null/undefined
+  const d = (await get('race/' + m.id)) || {};
 
   const regions = list(d.region_results).map((r) => {
-    const g = Array.isArray(r.region) ? r.region[0] : r.region || {};
-    const candsList = list(r.candidates).map(mc);
-    const regReporting = num(g.percent_reporting) || 0;
+    const g = Array.isArray(r?.region) ? r.region[0] : r?.region || {};
+    const candsList = list(r?.candidates).map(mc);
+    const regReporting = num(g?.percent_reporting) || 0;
     const regTotalVotes = candsList.reduce((acc, c) => acc + (c.v || 0), 0);
-    
+
     // Estimate expected votes based on registered voters or turnout reporting ratio
-    const regVoters = num(g.registered_voters);
+    const regVoters = num(g?.registered_voters);
     let expectedVotes = regVoters ? Math.round(regVoters * 0.65) : null;
     if (!expectedVotes && regReporting > 0) {
       expectedVotes = Math.round(regTotalVotes / (regReporting / 100));
     }
 
     return {
-      name: g.name || 'Unknown',
-      type: g.type || 'County',
+      name: g?.name || 'Unknown',
+      type: g?.type || 'County',
       rep: regReporting,
       votes: regTotalVotes,
       expectedVotes: expectedVotes || regTotalVotes,
@@ -113,7 +114,7 @@ const one = async (m) => {
   else if (lowerName.includes('house') || lowerName.includes('congress')) raceCategory = 'U.S. House';
 
   const reportingPct = num(d.percent_reporting ?? m.percent_reporting) || 0;
-  const isCalled = Boolean(d.is_called || cands.some(c => c.w));
+  const isCalled = Boolean(d.is_called || cands.some((c) => c.w));
 
   const historySnapshot = {
     timestamp: new Date().toISOString(),
@@ -140,7 +141,7 @@ const one = async (m) => {
 const races = [];
 let failed = 0, i = 0;
 
-// Lower batch concurrency from 8 down to 3 workers with 50ms gaps between fetches to prevent HTTP 502 rate-limiting
+// Batch concurrency workers with gaps to prevent HTTP 502 rate-limiting
 await Promise.all(
   Array.from({ length: 3 }, async () => {
     while (i < picked.length) {
