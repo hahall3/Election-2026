@@ -165,7 +165,7 @@ const one = async (m) => {
   const now = new Date().toISOString();
 
   const regions = list(d.region_results).map((r) => {
-    const g = Array.isArray(r?.region) ? r.region[0](https://citation-placeholder) : r?.region || {};
+    const g = (Array.isArray(r?.region) ? r.region.at(0) : r?.region) || {};
     const candsList = list(r?.candidates).map(mc);
     const regReporting = num(g?.percent_reporting) || 0;
     const regTotalVotes = candsList.reduce((acc, c) => acc + (c.v || 0), 0);
