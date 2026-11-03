@@ -2,7 +2,7 @@ name: Update and Deploy Dashboard
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -91,7 +91,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'dist' # Uses 'dist' for Vite. Change to 'build' if using Create React App.
+          path: 'dist'
 
       - name: Deploy to GitHub Pages
         id: deployment
