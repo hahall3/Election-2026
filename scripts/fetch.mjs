@@ -5,14 +5,17 @@ import { writeFile, mkdir } from 'node:fs/promises';
 const BASE = process.env.CIVIC_BASE || 'https://civicapi.org/api/v2/';
 const DAY = process.env.ELECTION_DAY || '2026-11-03';
 
+// Matrix worker environment variables passed from GitHub Actions
 const WORKER_ID = Number(process.env.WORKER_ID || 0);
 const TOTAL_WORKERS = Number(process.env.TOTAL_WORKERS || 1);
 
+// National Marquee keywords and race categories
 const NATIONAL_MARQUEE_KEYWORDS = [
   'president', 'u.s. senate', 'us senate', 'senate', 'governor', 'u.s. house', 'us house', 'congress'
 ];
 const NATIONAL_TYPES = ['federal', 'governor'];
 
+// KY specific local keywords
 const KY_LOCAL_KEYWORDS = [
   'attorney general', 'secretary of state', 'treasurer', 'auditor', 'commissioner', 'judge',
   'fiscal court', 'sheriff', 'clerk', 'jailer', 'coroner', 'assessor', 'surveyor'
@@ -21,6 +24,7 @@ const KY_TYPES = ['state house', 'state senate', 'county', 'local', 'municipal']
 
 const H = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
 
+// Helper fetch function with automatic retry logic for transient API error codes
 const get = async (p, retries = 3) => {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
@@ -49,10 +53,15 @@ const num = (v) => {
 const low = (x) => String(x ?? '').toLowerCase();
 const any = (t, terms) => terms.some((k) => t.includes(k));
 
+// Search across all national races on target election day
 const q = new URLSearchParams({ startDate: DAY, endDate: DAY, country: 'US', limit: '50000' });
 const raw = await get('race/search?' + q);
 const all = Array.isArray(raw) ? raw : list(Object.values(raw || {}).find(Array.isArray));
 
+// Filtering Rules:
+// 1. Must be on ELECTION_DAY
+// 2. EITHER it's a National Marquee Race (US Senate, US House, Governor, President)
+// 3. OR it belongs to Kentucky (state / county / local elections in KY)
 const picked = all
   .filter((r) => String(r.election_date ?? '').slice(0, 10) === DAY)
   .filter((r) => {
@@ -63,6 +72,7 @@ const picked = all
     const isNationalMarquee = any(name, NATIONAL_MARQUEE_KEYWORDS) || any(type, NATIONAL_TYPES);
     const isKentucky = state === 'KY' || name.includes('kentucky') || name.includes(', ky');
 
+    // Keep if national marquee race OR located in KY
     if (isNationalMarquee) return true;
     if (isKentucky && (any(name, KY_LOCAL_KEYWORDS) || any(type, KY_TYPES) || Boolean(r.district || r.municipality))) {
       return true;
@@ -71,6 +81,7 @@ const picked = all
     return false;
   });
 
+// Partition work across matrix workers
 const workerPicked = picked.filter((_, index) => index % TOTAL_WORKERS === WORKER_ID);
 
 console.log(`Worker ${WORKER_ID + 1}/${TOTAL_WORKERS}: Processing ${workerPicked.length} of ${picked.length} selected races.`);
@@ -174,13 +185,9 @@ await Promise.all(
   })
 );
 
-if (!races.length) {
-  console.error(`Worker ${WORKER_ID + 1}: No races fetched.`);
-  process.exit(1);
-}
-
 races.sort((a, b) => a.id - b.id);
 
+// Safe shard writing: Writes an array even if empty to prevent exit code 254
 await mkdir('data', { recursive: true });
 const filePath = `data/races-${WORKER_ID}.json`;
 await writeFile(
