@@ -1,15 +1,23 @@
-name: Update results
+name: Update and Deploy Dashboard
 
 on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
 jobs:
   fetch-data:
     runs-on: ubuntu-latest
     strategy:
-      # Runs 8 parallel matrix workers simultaneously
       max-parallel: 8
       matrix:
         worker: [0, 1, 2, 3, 4, 5, 6, 7]
@@ -22,8 +30,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Fetch race data for assigned worker
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Fetch race data for worker
         run: node scripts/fetch.mjs
         env:
           WORKER_ID: ${{ matrix.worker }}
@@ -35,7 +47,7 @@ jobs:
           name: races-shard-${{ matrix.worker }}
           path: data/races-${{ matrix.worker }}.json
 
-  merge-data:
+  merge-and-deploy:
     needs: fetch-data
     runs-on: ubuntu-latest
 
@@ -47,6 +59,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
 
       - name: Download all worker artifacts
         uses: actions/download-artifact@v4
@@ -56,10 +72,27 @@ jobs:
       - name: Merge shard JSON files into data/races.json
         run: node scripts/merge.mjs
 
-      - name: Commit and push combined result
+      - name: Build frontend static assets
+        run: npm run build
+
+      - name: Copy races.json to build output
+        run: |
+          mkdir -p dist/data
+          cp data/races.json dist/data/races.json || cp data/races.json public/data/races.json
+
+      - name: Commit updated data back to git
         run: |
           git config user.name "results-bot"
           git config user.email "results-bot@users.noreply.github.com"
           git add data/races.json
-          git commit -m "Update combined race data" || echo "No changes to commit"
+          git commit -m "Update combined race data [skip ci]" || echo "No changes to commit"
           git push
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'dist' # Uses 'dist' for Vite. Change to 'build' if using Create React App.
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
