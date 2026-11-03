@@ -9,6 +9,7 @@ jobs:
   fetch-data:
     runs-on: ubuntu-latest
     strategy:
+      # Runs 8 parallel matrix workers simultaneously
       max-parallel: 8
       matrix:
         worker: [0, 1, 2, 3, 4, 5, 6, 7]
@@ -22,13 +23,13 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Fetch race data for worker
+      - name: Fetch race data for assigned worker
         run: node scripts/fetch.mjs
         env:
           WORKER_ID: ${{ matrix.worker }}
           TOTAL_WORKERS: 8
 
-      - name: Upload worker artifact
+      - name: Upload worker shard artifact
         uses: actions/upload-artifact@v4
         with:
           name: races-shard-${{ matrix.worker }}
