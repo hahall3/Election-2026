@@ -1,137 +1,117 @@
-// Election 2026 Initiative — merge worker shards into data/races.json.
-// - Reads every races-N.json found under shard-artifacts/ (flat or nested).
-// - Accepts shard files shaped as [...] or { races: [...] }.
-// - Carries forward the last good copy of any race missing from this run,
-//   so a failed or empty worker never wipes live results off the dashboard.
-// - Refuses to overwrite data/races.json when the merge yields zero races.
-import fs from 'node:fs';
-import path from 'node:path';
+// Election 2026 Initiative — shard merge.
+// Combines shard-artifacts/**/races-*.json into data/races.json, carries forward
+// last good races for failed workers, and APPENDS to each race's history so
+// time-series visuals actually grow between runs.
+import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 
-const ROOT = process.cwd();
-const SHARD_DIR = path.join(ROOT, process.env.SHARD_DIR || 'shard-artifacts');
-const OUT_FILE = path.join(ROOT, 'data', 'races.json');
+const SHARD_DIR = process.env.SHARD_DIR || 'shard-artifacts';
+const OUT = process.env.MERGE_OUT || 'data/races.json';
+const PREVIOUS_URL = process.env.PREVIOUS_URL || '';
+const MAX_HISTORY = Number(process.env.MAX_HISTORY || 300);
 
-function readJson(file) {
+const walk = async (dir) => {
+  const out = [];
+  let items = [];
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (err) {
-    console.warn(`::warning::Unreadable JSON ${path.relative(ROOT, file)}: ${err.message}`);
+    items = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const it of items) {
+    const p = join(dir, it.name);
+    if (it.isDirectory()) out.push(...(await walk(p)));
+    else if (/^races-\d+\.json$/.test(it.name)) out.push(p);
+  }
+  return out;
+};
+
+const readJson = async (p) => {
+  try {
+    return JSON.parse(await readFile(p, 'utf8'));
+  } catch {
     return null;
   }
-}
+};
 
-function toRaceArray(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (payload && Array.isArray(payload.races)) return payload.races;
-  return [];
-}
-
-function findShardFiles(dir) {
-  if (!fs.existsSync(dir)) return [];
-  const out = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...findShardFiles(full));
-    else if (/^races-\d+\.json$/.test(entry.name)) out.push(full);
+// Previous published dataset: live Pages URL first (runners are ephemeral), local file second.
+const loadPrevious = async () => {
+  if (PREVIOUS_URL) {
+    try {
+      const r = await fetch(`${PREVIOUS_URL}?t=${Date.now()}`, {
+        headers: { 'Cache-Control': 'no-cache' },
+        signal: AbortSignal.timeout(15000)
+      });
+      if (r.ok) {
+        const j = await r.json();
+        console.log(`Loaded previous dataset from ${PREVIOUS_URL} (${(j.races || []).length} races).`);
+        return j;
+      }
+      console.warn(`::warning::Previous dataset fetch returned ${r.status}`);
+    } catch (e) {
+      console.warn(`::warning::Previous dataset fetch failed: ${e.message}`);
+    }
   }
-  return out.sort();
-}
+  return (await readJson(OUT)) || { races: [] };
+};
 
-function raceKey(race) {
-  return String(race.id ?? `${race.category}|${race.state}|${race.district ?? ''}|${race.name}`);
-}
+const sig = (race) =>
+  createHash('sha1')
+    .update(JSON.stringify([race.pr, race.isCalled, (race.cands || []).map((c) => [c.n, c.v, c.pc, c.w])]))
+    .digest('hex');
 
-// 1. Previously published data (top-level shape is preserved on write).
-const previousPayload = fs.existsSync(OUT_FILE) ? readJson(OUT_FILE) : null;
-const previousRaces = toRaceArray(previousPayload);
-const wrapped = previousPayload !== null && !Array.isArray(previousPayload);
+const files = await walk(SHARD_DIR);
+const shards = (await Promise.all(files.map(readJson))).filter(Boolean);
+const previous = await loadPrevious();
+const prevById = new Map((previous.races || []).map((r) => [Number(r.id), r]));
 
-// 2. Fresh shard data from this run.
-const shardFiles = findShardFiles(SHARD_DIR);
-const fresh = new Map();
-let selectedIds = null;
-for (const file of shardFiles) {
-  const payload = readJson(file);
-  const races = toRaceArray(payload);
-  console.log(`Shard ${path.relative(ROOT, file)}: ${races.length} races`);
-  for (const race of races) {
-    if (race && typeof race === 'object') fresh.set(raceKey(race), race);
-  }
-  // Selection manifest from any worker whose race search succeeded.
-  if (!selectedIds && payload && payload.failed !== -1 && Array.isArray(payload.selectedIds) && payload.selectedIds.length) {
-    selectedIds = new Set(payload.selectedIds.map(String));
-  }
-}
+console.log(`Found ${files.length} shard files: ${files.join(', ') || '(none)'}`);
 
-// Valid category set. Anything else is a leftover from older classifier builds.
-const VALID_CATEGORIES = new Set(['U.S. Senate', 'U.S. House', 'Governor', 'State/Local']);
+const okShards = shards.filter((s) => s.failed !== -1);
+const failedWorkers = new Set(shards.filter((s) => s.failed === -1).map((s) => Number(s.worker)));
+const selected = new Set(okShards.flatMap((s) => s.selectedIds || []).map(Number));
 
-// Pruning guard: never prune when the manifest is missing or suspiciously small
-// (partial API search), so a bad run cannot wipe the dashboard.
-const PRUNE_MIN_RATIO = Number(process.env.PRUNE_MIN_RATIO || 0.5);
-const canPrune = Boolean(selectedIds) && selectedIds.size >= previousRaces.length * PRUNE_MIN_RATIO;
-if (selectedIds && !canPrune) {
-  console.warn(
-    `::warning::Selection manifest has ${selectedIds.size} ids vs ${previousRaces.length} published races; skipping prune.`
-  );
-}
-
-// History accumulation: fetch.mjs emits a single snapshot per run; append it
-// to the previously published history, skipping unchanged snapshots.
-const MAX_HISTORY = Number(process.env.MAX_HISTORY || 300);
-const snapshotSig = (s) => JSON.stringify([s?.reporting, (s?.candidates || []).map((c) => [c.n, c.v])]);
-
-function mergeHistory(prevRace, nextRace) {
-  const prev = Array.isArray(prevRace?.history) ? prevRace.history : [];
-  const next = Array.isArray(nextRace?.history) ? nextRace.history : [];
-  const out = [...prev];
-  for (const snap of next) {
-    const last = out[out.length - 1];
-    if (!last || snapshotSig(last) !== snapshotSig(snap)) out.push(snap);
-  }
-  return out.slice(-MAX_HISTORY);
-}
-
-// 3. Carry forward races the current run did not return (original order kept).
 const merged = new Map();
+for (const s of okShards) {
+  for (const race of s.races || []) merged.set(Number(race.id), race);
+}
+
+// Carry forward races owned by failed workers, or races a worker skipped this run.
 let carried = 0;
-let pruned = 0;
-for (const race of previousRaces) {
-  const key = raceKey(race);
-  const next = fresh.get(key);
-  if (next) {
-    merged.set(key, { ...next, history: mergeHistory(race, next) });
-    continue;
+for (const [id, race] of prevById) {
+  if (merged.has(id)) continue;
+  const keep = selected.size === 0 || selected.has(id) || failedWorkers.size > 0;
+  if (keep) {
+    merged.set(id, { ...race, stale: true });
+    carried++;
   }
-  const staleSelection = canPrune && !selectedIds.has(String(race.id));
-  const staleCategory = canPrune && !VALID_CATEGORIES.has(race.category);
-  if (staleSelection || staleCategory) {
-    pruned += 1;
-    continue;
-  }
-  merged.set(key, race);
-  carried += 1;
-}
-for (const [key, race] of fresh) {
-  if (!merged.has(key)) merged.set(key, race);
 }
 
-const races = [...merged.values()];
+// Append a history point only when the numbers actually changed.
+let changed = 0;
+const now = new Date().toISOString();
+const races = [...merged.values()]
+  .map((race) => {
+    if (race.stale) return race;
+    const prev = prevById.get(Number(race.id));
+    const prevHistory = Array.isArray(prev?.history) ? prev.history : [];
+    const point = (race.history || []).at(-1);
+    const isNew = !prev || prev.sig !== sig(race);
+    if (isNew) changed++;
+    const history = isNew && point ? [...prevHistory, point] : prevHistory.length ? prevHistory : race.history || [];
+    return { ...race, stale: false, sig: sig(race), history: history.slice(-MAX_HISTORY) };
+  })
+  .sort((a, b) => a.id - b.id);
 
-console.log(
-  `Shard files: ${shardFiles.length} | fresh races: ${fresh.size} | carried forward: ${carried} | pruned: ${pruned} | total: ${races.length}`
+if (!races.length && prevById.size) {
+  console.error('::error::Merge produced 0 races but a previous dataset exists; refusing to publish an empty file.');
+  process.exit(1);
+}
+
+await mkdir(dirname(OUT), { recursive: true });
+await writeFile(
+  OUT,
+  JSON.stringify({ updated: now, day: shards[0](https://citation-placeholder)?.day ?? null, count: races.length, changed, carried, races }) + '\n'
 );
-
-if (races.length === 0) {
-  console.warn('::warning::Merge produced 0 races. Leaving data/races.json untouched.');
-  process.exit(0);
-}
-
-const updated = new Date().toISOString();
-const output = wrapped ? { ...previousPayload, updated, races } : races;
-
-fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
-// Compact JSON: ~55% smaller than pretty-printed; this file is pushed every
-// 5 minutes and polled by every browser every 60 seconds.
-fs.writeFileSync(OUT_FILE, JSON.stringify(output) + '\n');
-console.log(`Wrote ${path.relative(ROOT, OUT_FILE)} (${races.length} races)`);
+console.log(`Merged ${races.length} races (${changed} changed, ${carried} carried forward) -> ${OUT}`);
