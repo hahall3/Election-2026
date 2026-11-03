@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kentucky Election Tracker</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#111827;--mu:#6b7280;--bd:#e5e7eb;--bar:#f3f4f6;--ac:#2e6db4;--warn:#b45309}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--tx:#e5e7eb;--mu:#9ca3af;--bd:#2a2e36;--bar:#242830;--ac:#6ea8e8;--warn:#f59e0b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.4 system-ui,Segoe UI,Arial,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--bd);background:var(--card)}
+h1{font-size:18px;margin:0 auto 0 0}.mu{color:var(--mu);font-size:12px}
+input,select{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font:inherit}
+main{display:grid;grid-template-columns:340px 1fr;gap:12px;padding:12px 16px}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px}
+#list{max-height:80vh;overflow:auto;padding:4px}
+.it{padding:8px;border-radius:8px;cursor:pointer;border-bottom:1px solid var(--bd)}.it:hover,.it.on{background:var(--bar)}
+.it b{display:block;font-size:13px}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+.hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.hd h2{font-size:17px;margin:0}.big{font-size:20px;font-weight:700}
+.row{display:grid;grid-template-columns:36% 1fr 90px;gap:8px;align-items:center;margin:7px 0}
+.bar{background:var(--bar);border-radius:4px;height:14px;overflow:hidden}.fill{height:100%}
+.num{text-align:right;font-weight:700}.num span{display:block;font-weight:400;font-size:11px;color:var(--mu)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--bd)}th{color:var(--mu);font-weight:600}td.r{text-align:right}
+.map{max-width:100%;max-height:340px;border-radius:8px;margin:8px 0}.w{color:var(--warn)}
+.tag{font-size:10px;background:var(--bar);padding:1px 6px;border-radius:9px;margin-left:6px}
+footer{padding:12px 16px 24px;color:var(--mu);font-size:11px}footer a{color:var(--ac)}
+</style></head><body>
+<header><h1>Kentucky Election Tracker</h1><span class="mu" id="up">Loading…</span>
+<input id="q" placeholder="Search race or candidate" aria-label="Search"><select id="co" aria-label="County"></select><select id="ty" aria-label="Group">
+<option value="">All races</option><option value="maj">Statewide &amp; federal</option><option value="leg">Legislature</option><option value="loc">Local (county/city)</option></select></header>
+<main><div class="card" id="list"></div><div class="card" id="det"><div class="mu">Select a race</div></div></main>
+<footer>Data: <a href="https://civicapi.org" target="_blank" rel="noopener">civicAPI</a>. Results are unofficial until certified; confirm with the <a href="https://elect.ky.gov" target="_blank" rel="noopener">Kentucky State Board of Elections</a>.</footer>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const N=v=>v==null?'–':Math.round(v).toLocaleString(),P=v=>v==null?'–':v.toFixed(1)+'%';
+const grp=p=>/rep|gop/i.test(p||'')?'REP':/dem/i.test(p||'')?'DEM':'OTH',PC={REP:'#c8423b',DEM:'#2e6db4',OTH:'#6b7280'};
+const colr=c=>/^#[0-9a-f]{3,8}$/i.test(c.col||'')?c.col:PC[grp(c.p)];
+const KW=/president|senate|governor|attorney general|secretary of state|u\.s\. house|congress/i,LEG=/state house|state senate/i;
+let D=null,sel=location.hash.slice(2)*1||null;
+function st(cs){const t=cs.reduce((a,c)=>a+(c.v||0),0),s=[...cs].sort((a,b)=>(b.v||0)-(a.v||0)),l=s[0],r=s[1];
+ const sh=c=>t?(c.v||0)/t*100:0;return{t,s,l,r,m:l&&r&&t?sh(l)-sh(r):null,sh}}
+const rep=r=>r.pr??(r.regions.length?r.regions.reduce((a,g)=>a+(g.rep||0),0)/r.regions.length:null);
+const mlabel=x=>x.l&&x.t?`${esc(x.l.n)} ${x.m==null?'':'+'+x.m.toFixed(1)}`:'No votes yet';
+function grpOf(r){const n=(r.name||'')+' '+(r.type||'');return KW.test(r.name||'')?'maj':LEG.test(n)?'leg':'loc'}
+function list(){const q=$('#q').value.toLowerCase(),co=$('#co').value,ty=$('#ty').value;
+ const rs=D.races.filter(r=>(!co||(r.district||r.muni)===co)&&(!ty||grpOf(r)===ty)&&(!q||(r.name+' '+r.district+' '+r.cands.map(c=>c.n).join(' ')).toLowerCase().includes(q)));
+ $('#list').innerHTML=rs.map(r=>{const x=st(r.cands);return`<div class="it${r.id===sel?' on':''}" data-id="${r.id}"><b>${esc(r.name)}</b><span class="mu">${esc(r.district||r.muni||'Statewide')} · ${P(rep(r))} in</span><br>${x.l?`<span class="dot" style="background:${colr(x.l)}"></span>${mlabel(x)}${x.l.w?'<span class="tag">Called</span>':''}`:''}</div>`}).join('')||'<div class="mu">No races match</div>'}
+function det(){const r=D.races.find(r=>r.id===sel);if(!r){$('#det').innerHTML='<div class="mu">Select a race</div>';return}
+ const x=st(r.cands),mx=x.s[0]?.v||0,pr=rep(r);
+ const rows=x.s.slice(0,8).map(c=>`<div class="row"><div><b>${esc(c.n)}</b>${c.w?'<span class="tag">Winner</span>':''}<div class="mu">${esc(c.p||'')}</div></div><div class="bar"><div class="fill" style="width:${mx?(c.v||0)/mx*100:0}%;background:${colr(c)}"></div></div><div class="num">${x.t?P(x.sh(c)):'–'}<span>${N(c.v)}</span></div></div>`).join('');
+ const cty=r.regions.map(g=>{const y=st(g.c);return`<tr><td>${esc(g.name)}</td><td>${y.t?`<span class="dot" style="background:${colr(y.l)}"></span>${esc(y.l.n)}`:'–'}</td><td class="r">${y.m==null?'–':y.m.toFixed(1)}</td><td class="r">${P(g.rep)}</td></tr>`}).sort().join('');
+ $('#det').innerHTML=`<div class="hd"><h2>${esc(r.name)}</h2><div class="big">${mlabel(x)}</div></div><div class="mu">${N(x.t)} votes · ${P(pr)} reporting${r.reg?' · '+N(r.reg)+' registered':''} · <a href="https://civicapi.org/results/elections/${Number(r.id)}" target="_blank" rel="noopener" style="color:var(--ac)">civicAPI page</a></div>${x.t?rows:'<p class="mu">No votes reported yet</p>'}${r.map?`<img class="map" loading="lazy" alt="County results map" src="https://civicapi.org/api/v2/race/${Number(r.id)}?generateMapPNG&format=percentage">`:''}${cty?`<table><tr><th>County</th><th>Leader</th><th class="r">Margin</th><th class="r">Reporting</th></tr>${cty}</table>`:''}`}
+async function load(){try{const j=await(await fetch('data/races.json?t='+Date.now())).json();D=j;
+ const age=(Date.now()-new Date(j.updated))/6e4;$('#up').innerHTML=(j.sample?'<b class="w">SAMPLE DATA · </b>':'')+'Updated '+new Date(j.updated).toLocaleTimeString()+(age>15?' <b class="w">(stale — data may be delayed)</b>':'');
+ const cur=$('#co').value,cs=[...new Set(j.races.map(r=>r.district||r.muni).filter(Boolean))].sort();
+ $('#co').innerHTML='<option value="">All counties</option>'+cs.map(c=>`<option>${esc(c)}</option>`).join('');$('#co').value=cur;list();det()}
+ catch(e){$('#up').innerHTML='<b class="w">Could not load data/races.json</b>'}}
+$('#list').onclick=e=>{const i=e.target.closest('.it');if(i){sel=+i.dataset.id;location.hash='r'+sel;list();det()}};
+['#q','#co','#ty'].forEach(s=>$(s).oninput=list);load();setInterval(load,60000);
+</script></body></html>
