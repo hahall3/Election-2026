@@ -160,12 +160,42 @@ const mc = (c) => ({
   pc: num(c?.percent)
 });
 
+// region_results arrives keyed by region slug ({ "jefferson": {...} }) with the
+// region attributes (name, type, percent_reporting) flat on each entry. The old
+// parser read r.region (absent), so every county was written as "Unknown".
+// Object.entries keeps the slug so it can serve as a last-resort name.
+const entries = (x) =>
+  x == null ? [] : Array.isArray(x) ? x.map((v, k) => [String(k), v]) : typeof x === 'object' ? Object.entries(x) : [];
+
+const humanize = (slug) => {
+  if (!slug || /^\d+$/.test(slug)) return null;
+  return String(slug)
+    .replace(/^[a-z]{2}[-_:]/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+county$/i, '')
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+};
+
+const cleanRegionName = (n) => String(n).replace(/\s+County$/i, '').trim();
+
+let shapeLogged = false;
+
 const one = async (m) => {
   const d = (await get('race/' + m.id)) || {};
   const now = new Date().toISOString();
 
-  const regions = list(d.region_results).map((r) => {
-    const g = (Array.isArray(r?.region) ? r.region.at(0) : r?.region) || {};
+  if (!shapeLogged && entries(d.region_results).length) {
+    shapeLogged = true;
+    const [k0, v0] = entries(d.region_results)[0];
+    console.log(`region_results shape (race ${m.id}): key="${k0}" fields=${Object.keys(v0 || {}).join(',')}`);
+  }
+
+  const regions = entries(d.region_results).map(([slug, r]) => {
+    const nested = Array.isArray(r?.region) ? r.region.at(0) : r?.region && typeof r.region === 'object' ? r.region : null;
+    const g = { ...(r || {}), ...(nested || {}) };
+    const rawName =
+      g.name ?? g.region_name ?? g.county ?? g.county_name ?? (typeof r?.region === 'string' ? r.region : null) ?? humanize(slug);
     const candsList = list(r?.candidates).map(mc);
     const regReporting = num(g?.percent_reporting) || 0;
     const regTotalVotes = candsList.reduce((acc, c) => acc + (c.v || 0), 0);
@@ -177,7 +207,8 @@ const one = async (m) => {
     }
 
     return {
-      name: g?.name || 'Unknown',
+      name: rawName ? cleanRegionName(rawName) : 'Unknown',
+      slug,
       type: g?.type || 'County',
       rep: regReporting,
       votes: regTotalVotes,
@@ -254,9 +285,16 @@ await Promise.all(
 
 races.sort((a, b) => a.id - b.id);
 
-// Safe shard writing: always write a valid shard, even with zero races
+// Safe shard writing: always write a valid shard, even with zero races.
+// selectedIds is the full (all-worker) selection for this run; merge.mjs uses
+// it to prune stale races that no longer pass the selection rules.
 const filePath = await writeShard({
-  updated: new Date().toISOString(), day: DAY, worker: WORKER_ID, failed, races
+  updated: new Date().toISOString(),
+  day: DAY,
+  worker: WORKER_ID,
+  failed,
+  selectedIds: picked.map((r) => Number(r.id)),
+  races
 });
 
 console.log(`Worker ${WORKER_ID + 1} wrote ${races.length} races (${failed} failed) to ${filePath}`);
