@@ -4,6 +4,10 @@ import { writeFile, mkdir } from 'node:fs/promises';
 const BASE = process.env.CIVIC_BASE || 'https://civicapi.org/api/v2/';
 const DAY = process.env.ELECTION_DAY || '2026-11-03';
 
+// Matrix worker environment variables passed from GitHub Actions
+const WORKER_ID = Number(process.env.WORKER_ID || 0);
+const TOTAL_WORKERS = Number(process.env.TOTAL_WORKERS || 1);
+
 const KEYWORDS = [
   'president', 'u.s. senate', 'us senate', 'senate', 'governor', 'u.s. house', 'us house', 'congress',
   'attorney general', 'secretary of state', 'treasurer', 'auditor', 'commissioner', 'judge',
@@ -13,14 +17,14 @@ const TYPES = ['federal', 'governor', 'state house', 'state senate', 'county', '
 
 const H = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
 
-// Helper fetch function with automatic retry logic for 502/500 rate-limit errors
+// Helper fetch function with automatic retry logic for 502/500/429 rate-limit errors
 const get = async (p, retries = 3) => {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const r = await fetch(BASE + p, { headers: H });
       if (r.ok) return await r.json();
 
-      // Retry on transient server error codes (502 Bad Gateway, 500, 429 Rate Limit)
+      // Retry on transient server error codes (502 Bad Gateway, 500 Internal Error, 429 Rate Limit)
       if (r.status === 502 || r.status === 500 || r.status === 429) {
         await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
         continue;
@@ -43,11 +47,12 @@ const num = (v) => {
 const low = (x) => String(x ?? '').toLowerCase();
 const any = (t, terms) => terms.some((k) => t.includes(k));
 
+// Perform search request
 const q = new URLSearchParams({ startDate: DAY, endDate: DAY, country: 'US', province: 'KY', limit: '50000' });
 const raw = await get('race/search?' + q);
 const all = Array.isArray(raw) ? raw : list(Object.values(raw || {}).find(Array.isArray));
 
-// Filter to capture all federal marquee races (US Senate, US House, Governor) + all KY county elections
+// Filter to capture marquee and local KY races
 const picked = all
   .filter((r) => String(r.election_date ?? '').slice(0, 10) === DAY)
   .filter(
@@ -57,7 +62,10 @@ const picked = all
       Boolean(r.district || r.municipality || r.region_results)
   );
 
-console.log(`search: ${all.length} total found, ${picked.length} selected for processing`);
+// Partition work across the matrix workers using round-robin indexing
+const workerPicked = picked.filter((_, index) => index % TOTAL_WORKERS === WORKER_ID);
+
+console.log(`Worker ${WORKER_ID + 1}/${TOTAL_WORKERS}: Processing ${workerPicked.length} of ${picked.length} total selected races.`);
 
 const mc = (c) => ({
   n: c?.name,
@@ -69,7 +77,7 @@ const mc = (c) => ({
 });
 
 const one = async (m) => {
-  // Ensure 'd' safely defaults to an empty object if 'get' returns null/undefined
+  // Ensure 'd' defaults safely to an empty object if 'get' returns null/undefined
   const d = (await get('race/' + m.id)) || {};
 
   const regions = list(d.region_results).map((r) => {
@@ -141,11 +149,11 @@ const one = async (m) => {
 const races = [];
 let failed = 0, i = 0;
 
-// Batch concurrency workers with gaps to prevent HTTP 502 rate-limiting
+// Inner concurrent fetching loop (3 workers per matrix runner with 50ms delays)
 await Promise.all(
   Array.from({ length: 3 }, async () => {
-    while (i < picked.length) {
-      const m = picked[i++];
+    while (i < workerPicked.length) {
+      const m = workerPicked[i++];
       try {
         races.push(await one(m));
       } catch (e) {
@@ -158,16 +166,18 @@ await Promise.all(
 );
 
 if (!races.length) {
-  console.error('No races fetched; leaving data/races.json untouched');
+  console.error(`Worker ${WORKER_ID + 1}: No races fetched.`);
   process.exit(1);
 }
 
 races.sort((a, b) => a.id - b.id);
 
+// Write output per worker (e.g., data/races-0.json, data/races-1.json)
 await mkdir('data', { recursive: true });
+const filePath = `data/races-${WORKER_ID}.json`;
 await writeFile(
-  'data/races.json',
-  JSON.stringify({ updated: new Date().toISOString(), day: DAY, state: 'KY', failed, races }, null, 2)
+  filePath,
+  JSON.stringify({ updated: new Date().toISOString(), day: DAY, state: 'KY', worker: WORKER_ID, failed, races }, null, 2)
 );
 
-console.log(`Successfully wrote ${races.length} races to data/races.json`);
+console.log(`Worker ${WORKER_ID + 1} wrote ${races.length} races to ${filePath}`);
