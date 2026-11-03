@@ -1,9 +1,11 @@
-# Kentucky Election Tracker (GitHub Pages)
+# Kentucky Election Dashboard 2026 — Election 2026 Initiative
 
-1. Create a new GitHub repo and upload everything in this folder (keep the `.github` folder).
-2. Settings → Pages → Deploy from branch → `main` / root. Your site appears at `https://<user>.github.io/<repo>/`.
-3. Settings → Actions → General → Workflow permissions → **Read and write**.
-4. Actions tab → "Update results" → **Run workflow** once to replace the sample data with live data.
+1. Settings → Pages → **Source: GitHub Actions** (required — the workflow publishes with `actions/deploy-pages@v4`; "Deploy from branch" will not work).
+2. Settings → Actions → General → Workflow permissions → **Read and write**.
+3. Actions tab → "Update and Deploy Dashboard" → **Run workflow** to refresh immediately.
 
-The workflow refreshes `data/races.json` about every 5 minutes (GitHub may delay scheduled runs, and pauses them after 60 days without repo activity). The page re-reads the file every 60 seconds.
-Change the date, races, or counties in `scripts/fetch.mjs` (top of file). Data: civicapi.org (attribution is in the footer).
+The workflow runs every 5 minutes across 8 matrix workers (`scripts/fetch.mjs`), merges shards into `data/races.json` (`scripts/merge.mjs`), and deploys `dist/` to GitHub Pages. The page re-reads `data/races.json` every 60 seconds.
+
+Scope: U.S. Senate, U.S. House, and Governor races nationwide, plus all Kentucky state/county/local races. Races that no longer match the selection rules are pruned automatically on the next successful run.
+
+Data: civicapi.org (attribution is in the footer).
