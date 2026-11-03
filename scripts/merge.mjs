@@ -49,12 +49,31 @@ const wrapped = previousPayload !== null && !Array.isArray(previousPayload);
 // 2. Fresh shard data from this run.
 const shardFiles = findShardFiles(SHARD_DIR);
 const fresh = new Map();
+let selectedIds = null;
 for (const file of shardFiles) {
-  const races = toRaceArray(readJson(file));
+  const payload = readJson(file);
+  const races = toRaceArray(payload);
   console.log(`Shard ${path.relative(ROOT, file)}: ${races.length} races`);
   for (const race of races) {
     if (race && typeof race === 'object') fresh.set(raceKey(race), race);
   }
+  // Selection manifest from any worker whose race search succeeded.
+  if (!selectedIds && payload && payload.failed !== -1 && Array.isArray(payload.selectedIds) && payload.selectedIds.length) {
+    selectedIds = new Set(payload.selectedIds.map(String));
+  }
+}
+
+// Valid category set. Anything else is a leftover from older classifier builds.
+const VALID_CATEGORIES = new Set(['U.S. Senate', 'U.S. House', 'Governor', 'State/Local']);
+
+// Pruning guard: never prune when the manifest is missing or suspiciously small
+// (partial API search), so a bad run cannot wipe the dashboard.
+const PRUNE_MIN_RATIO = Number(process.env.PRUNE_MIN_RATIO || 0.5);
+const canPrune = Boolean(selectedIds) && selectedIds.size >= previousRaces.length * PRUNE_MIN_RATIO;
+if (selectedIds && !canPrune) {
+  console.warn(
+    `::warning::Selection manifest has ${selectedIds.size} ids vs ${previousRaces.length} published races; skipping prune.`
+  );
 }
 
 // History accumulation: fetch.mjs emits a single snapshot per run; append it
@@ -76,15 +95,22 @@ function mergeHistory(prevRace, nextRace) {
 // 3. Carry forward races the current run did not return (original order kept).
 const merged = new Map();
 let carried = 0;
+let pruned = 0;
 for (const race of previousRaces) {
   const key = raceKey(race);
   const next = fresh.get(key);
   if (next) {
     merged.set(key, { ...next, history: mergeHistory(race, next) });
-  } else {
-    merged.set(key, race);
-    carried += 1;
+    continue;
   }
+  const staleSelection = canPrune && !selectedIds.has(String(race.id));
+  const staleCategory = canPrune && !VALID_CATEGORIES.has(race.category);
+  if (staleSelection || staleCategory) {
+    pruned += 1;
+    continue;
+  }
+  merged.set(key, race);
+  carried += 1;
 }
 for (const [key, race] of fresh) {
   if (!merged.has(key)) merged.set(key, race);
@@ -93,7 +119,7 @@ for (const [key, race] of fresh) {
 const races = [...merged.values()];
 
 console.log(
-  `Shard files: ${shardFiles.length} | fresh races: ${fresh.size} | carried forward: ${carried} | total: ${races.length}`
+  `Shard files: ${shardFiles.length} | fresh races: ${fresh.size} | carried forward: ${carried} | pruned: ${pruned} | total: ${races.length}`
 );
 
 if (races.length === 0) {
@@ -105,5 +131,7 @@ const updated = new Date().toISOString();
 const output = wrapped ? { ...previousPayload, updated, races } : races;
 
 fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
-fs.writeFileSync(OUT_FILE, JSON.stringify(output, null, 2) + '\n');
+// Compact JSON: ~55% smaller than pretty-printed; this file is pushed every
+// 5 minutes and polled by every browser every 60 seconds.
+fs.writeFileSync(OUT_FILE, JSON.stringify(output) + '\n');
 console.log(`Wrote ${path.relative(ROOT, OUT_FILE)} (${races.length} races)`);
