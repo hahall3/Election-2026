@@ -1,32 +1,21 @@
 // Election 2026 Initiative — results fetch worker.
-// Pulls federal marquee races (U.S. Senate, U.S. House, Governor) nationwide,
-// plus ALL state, county, and local races for Kentucky.
-// Each matrix worker owns the races where (id % TOTAL_WORKERS === WORKER_ID),
-// so ownership is stable across runs regardless of API result ordering.
-import { writeFile, mkdir } from 'node:fs/promises';
+// Reads data/manifest.json (written once by discover.mjs) and fetches per-race
+// detail for the races this worker owns: (id % TOTAL_WORKERS === WORKER_ID).
+// No nationwide search happens here, so workers can no longer time out on it.
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
 const BASE = process.env.CIVIC_BASE || 'https://civicapi.org/api/v2/';
 const DAY = process.env.ELECTION_DAY || '2026-11-03';
-const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 20000);
+const MANIFEST = process.env.MANIFEST || 'data/manifest.json';
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 const CONCURRENCY = Number(process.env.FETCH_CONCURRENCY || 3);
 
-// Matrix worker environment variables passed from GitHub Actions
 const WORKER_ID = Number(process.env.WORKER_ID || 0);
 const TOTAL_WORKERS = Math.max(1, Number(process.env.TOTAL_WORKERS || 1));
-
-// KY state/county/local keywords and types
-const KY_LOCAL_KEYWORDS = [
-  'attorney general', 'secretary of state', 'treasurer', 'auditor', 'commissioner', 'judge',
-  'fiscal court', 'sheriff', 'clerk', 'jailer', 'coroner', 'assessor', 'surveyor', 'mayor',
-  'council', 'school board', 'board of education', 'magistrate', 'constable', 'pva',
-  'state senate', 'state house', 'state representative', 'amendment'
-];
-const KY_TYPES = ['state', 'state house', 'state senate', 'county', 'local', 'municipal', 'judicial'];
 
 const H = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-// Fetch with timeout and retry on transient errors (network, 429, 5xx)
 const get = async (p, retries = 3) => {
   let lastErr;
   for (let attempt = 0; attempt < retries; attempt++) {
@@ -39,7 +28,7 @@ const get = async (p, retries = 3) => {
       lastErr = e;
       if (/^4\d\d /.test(e.message) && !e.message.startsWith('429')) throw e;
     }
-    if (attempt < retries - 1) await sleep(500 * (attempt + 1));
+    if (attempt < retries - 1) await sleep(1000 * (attempt + 1));
   }
   throw lastErr;
 };
@@ -51,41 +40,6 @@ const num = (v) => {
   const n = Number(String(v).replace(/[,%\s]/g, ''));
   return Number.isNaN(n) ? null : n;
 };
-const low = (x) => String(x ?? '').toLowerCase();
-const any = (t, terms) => terms.some((k) => t.includes(k));
-
-const isKentuckyRace = (r) => {
-  const state = String(r.province ?? r.state ?? '').trim().toUpperCase();
-  const name = low(r.election_name);
-  return state === 'KY' || state === 'KENTUCKY' || name.includes('kentucky') || name.includes(', ky');
-};
-
-// Strict category classification. Bare "senate"/"house"/"governor" matching
-// previously pulled every State Senate, State House, and Lieutenant Governor
-// race in the country and mislabeled them as federal races.
-const classify = (r) => {
-  const name = low(r.election_name);
-  const type = low(r.type ?? r.election_type);
-  const text = `${name} ${type}`;
-
-  const isStateLeg = /\bstate (senate|house|representative|assembly)\b|\blegislative\b|\bgeneral assembly\b/.test(text);
-  const isLtGov = /\b(lieutenant|lt\.?) governor\b/.test(text);
-  const federal = /\b(u\.?\s?s\.?|united states|federal)\b/.test(text);
-
-  if (!isStateLeg) {
-    if (/\b(u\.?\s?s\.?|united states) senat(e|or)\b/.test(text) || (federal && /\bsenate\b/.test(text))) {
-      return 'U.S. Senate';
-    }
-    if (
-      /\b(u\.?\s?s\.?|united states) (house|representative)\b|\bcongress(ional)?\b|\brepresentative in congress\b/.test(text) ||
-      (federal && /\bhouse\b/.test(text))
-    ) {
-      return 'U.S. House';
-    }
-  }
-  if (!isLtGov && /\bgovernor\b/.test(text)) return 'Governor';
-  return 'State/Local';
-};
 
 const writeShard = async (payload) => {
   await mkdir('data', { recursive: true });
@@ -95,48 +49,21 @@ const writeShard = async (payload) => {
 };
 
 // ---------------------------------------------------------------------------
-// 1. Race discovery
+// 1. Load manifest
 // ---------------------------------------------------------------------------
-let all = [];
+let manifest;
 try {
-  const q = new URLSearchParams({ startDate: DAY, endDate: DAY, country: 'US', limit: '50000' });
-  const raw = await get('race/search?' + q);
-  all = Array.isArray(raw) ? raw : list(Object.values(raw || {}).find(Array.isArray));
+  manifest = JSON.parse(await readFile(MANIFEST, 'utf8'));
 } catch (e) {
-  // Safe shard writing: still emit a valid (empty) shard, but fail the step
-  // visibly. merge.mjs carries forward last good results for this worker.
-  console.error(`::error::Worker ${WORKER_ID} race search failed: ${e.message}`);
+  console.error(`::error::Worker ${WORKER_ID} could not read ${MANIFEST}: ${e.message}`);
   const filePath = await writeShard({
     updated: new Date().toISOString(), day: DAY, worker: WORKER_ID, failed: -1, error: e.message, races: []
   });
   console.log(`Worker ${WORKER_ID} wrote empty shard to ${filePath}`);
-  process.exit(1);
+  process.exit(0);
 }
 
-// Filtering rules:
-// 1. Must be on ELECTION_DAY
-// 2. EITHER a federal marquee race (U.S. Senate, U.S. House, Governor) anywhere
-// 3. OR any Kentucky state / county / local race
-const seen = new Set();
-const picked = all
-  .filter((r) => r && r.id != null && String(r.election_date ?? '').slice(0, 10) === DAY)
-  .filter((r) => {
-    const key = String(r.id);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  })
-  .filter((r) => {
-    const category = classify(r);
-    if (category !== 'State/Local') return true;
-    if (!isKentuckyRace(r)) return false;
-    const name = low(r.election_name);
-    const type = low(r.type ?? r.election_type);
-    return any(name, KY_LOCAL_KEYWORDS) || any(type, KY_TYPES) || Boolean(r.district || r.municipality);
-  })
-  .sort((a, b) => Number(a.id) - Number(b.id));
-
-// Stable partition by race id (not array index)
+const picked = list(manifest.races);
 const owner = (r) => {
   const n = Number(r.id);
   if (Number.isFinite(n)) return Math.abs(Math.trunc(n)) % TOTAL_WORKERS;
@@ -146,7 +73,7 @@ const owner = (r) => {
 };
 const workerPicked = picked.filter((r) => owner(r) === WORKER_ID);
 
-console.log(`Worker ${WORKER_ID + 1}/${TOTAL_WORKERS}: Processing ${workerPicked.length} of ${picked.length} selected races (${all.length} returned by search).`);
+console.log(`Worker ${WORKER_ID + 1}/${TOTAL_WORKERS}: Processing ${workerPicked.length} of ${picked.length} manifest races (source=${manifest.source}).`);
 
 // ---------------------------------------------------------------------------
 // 2. Per-race detail
@@ -160,10 +87,6 @@ const mc = (c) => ({
   pc: num(c?.percent)
 });
 
-// region_results arrives keyed by region slug ({ "jefferson": {...} }) with the
-// region attributes (name, type, percent_reporting) flat on each entry. The old
-// parser read r.region (absent), so every county was written as "Unknown".
-// Object.entries keeps the slug so it can serve as a last-resort name.
 const entries = (x) =>
   x == null ? [] : Array.isArray(x) ? x.map((v, k) => [String(k), v]) : typeof x === 'object' ? Object.entries(x) : [];
 
@@ -187,7 +110,7 @@ const one = async (m) => {
 
   if (!shapeLogged && entries(d.region_results).length) {
     shapeLogged = true;
-    const [k0, v0] = entries(d.region_results)[0];
+    const [k0, v0] = entries(d.region_results)[0](https://citation-placeholder);
     console.log(`region_results shape (race ${m.id}): key="${k0}" fields=${Object.keys(v0 || {}).join(',')}`);
   }
 
@@ -229,26 +152,23 @@ const one = async (m) => {
     cands = Object.values(t);
   }
 
-  // Fill missing candidate percentages from vote totals
   const totalVotes = cands.reduce((acc, c) => acc + (c.v || 0), 0);
   if (totalVotes > 0) {
     cands = cands.map((c) => (c.pc == null ? { ...c, pc: Math.round(((c.v || 0) / totalVotes) * 1000) / 10 } : c));
   }
 
-  const raceCategory = classify(m);
   const reportingPct = num(d.percent_reporting ?? m.percent_reporting) || 0;
   const isCalled = Boolean(d.is_called || cands.some((c) => c.w));
-  const isKY = isKentuckyRace(m);
 
   return {
     id: Number(m.id),
-    name: m.election_name,
-    category: raceCategory,
-    type: raceCategory,
-    state: isKY ? 'KY' : (m.province ?? m.state ?? 'US'),
-    isKentucky: isKY,
+    name: m.election_name ?? d.election_name,
+    category: m.category,
+    type: m.category,
+    state: m.state,
+    isKentucky: Boolean(m.isKentucky),
     district: m.district ?? null,
-    muni: m.municipality ?? null,
+    muni: m.muni ?? null,
     pr: reportingPct,
     reg: num(d.registered_voters),
     isCalled,
@@ -285,9 +205,6 @@ await Promise.all(
 
 races.sort((a, b) => a.id - b.id);
 
-// Safe shard writing: always write a valid shard, even with zero races.
-// selectedIds is the full (all-worker) selection for this run; merge.mjs uses
-// it to prune stale races that no longer pass the selection rules.
 const filePath = await writeShard({
   updated: new Date().toISOString(),
   day: DAY,
