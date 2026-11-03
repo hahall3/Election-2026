@@ -2,12 +2,28 @@ import React, { useState, useEffect, useMemo } from 'react';
 import RaceCard from './components/RaceCard';
 import KentuckyHeatmap from './components/KentuckyHeatmap';
 
+// Complete Alphabetical List of Kentucky's 120 Counties
+const KY_COUNTIES = [
+  'Adair', 'Allen', 'Anderson', 'Ballard', 'Barren', 'Bath', 'Bell', 'Boone', 'Bourbon', 'Boyd',
+  'Boyle', 'Bracken', 'Breathitt', 'Breckinridge', 'Bullitt', 'Butler', 'Caldwell', 'Calloway', 'Campbell', 'Carlisle',
+  'Carroll', 'Carter', 'Casey', 'Christian', 'Clark', 'Clay', 'Clinton', 'Crittenden', 'Cumberland', 'Daviess',
+  'Edmonson', 'Elliott', 'Estill', 'Fayette', 'Fleming', 'Floyd', 'Franklin', 'Fulton', 'Gallatin', 'Garrard',
+  'Grant', 'Graves', 'Grayson', 'Green', 'Greenup', 'Hancock', 'Hardin', 'Harlan', 'Harrison', 'Hart',
+  'Henderson', 'Henry', 'Hickman', 'Hopkins', 'Jackson', 'Jefferson', 'Jessamine', 'Johnson', 'Kenton', 'Knott',
+  'Knox', 'Larue', 'Laurel', 'Lawrence', 'Lee', 'Leslie', 'Letcher', 'Lewis', 'Lincoln', 'Livingston',
+  'Logan', 'Lyon', 'McCracken', 'McCreary', 'McLean', 'Madison', 'Magoffin', 'Marion', 'Marshall', 'Martin',
+  'Mason', 'Meade', 'Menifee', 'Mercer', 'Metcalfe', 'Monroe', 'Montgomery', 'Morgan', 'Muhlenberg', 'Nelson',
+  'Nicholas', 'Ohio', 'Oldham', 'Owen', 'Owsley', 'Pendleton', 'Perry', 'Pike', 'Powell', 'Pulaski',
+  'Robertson', 'Rockcastle', 'Rowan', 'Russell', 'Scott', 'Shelby', 'Simpson', 'Spencer', 'Taylor', 'Todd',
+  'Trigg', 'Trimble', 'Union', 'Warren', 'Washington', 'Wayne', 'Webster', 'Whitley', 'Wolfe', 'Woodford'
+];
+
 export default function App() {
   const [allRaces, setAllRaces] = useState([]);
   const [loading, setLoading] = useState(true);
   
   // Interactive Filter States
-  const [activeTab, setActiveTab] = useState('ALL_KY'); // 'ALL_KY', 'FEDERAL', 'LOCAL_KY'
+  const [activeTab, setActiveTab] = useState('ALL_KY'); // 'ALL_KY', 'SENATE', 'HOUSE', 'LOCAL_KY'
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCounty, setSelectedCounty] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -26,27 +42,35 @@ export default function App() {
       });
   }, []);
 
-  // 1. Featured Top Race: KY-06 House Race
+  // 1. Featured Top Race: Kentucky 6th Congressional District (KY-06)
   const ky6Race = useMemo(() => {
-    return allRaces.find(
-      (r) =>
-        (r.isKentucky || String(r.state).toUpperCase() === 'KY') &&
-        (String(r.district) === '6' || String(r.name).includes('District 6') || String(r.name).includes('6th')) &&
-        (r.category === 'U.S. House' || String(r.name).toLowerCase().includes('house'))
-    );
+    return allRaces.find((r) => {
+      const name = String(r.name || '').toLowerCase();
+      const state = String(r.state || '').toUpperCase();
+      const dist = String(r.district || '');
+
+      const isKY = r.isKentucky || state === 'KY' || name.includes('kentucky');
+      const isDistrict6 = dist === '6' || name.includes('district 6') || name.includes('6th');
+      const isHouse = r.category === 'U.S. House' || name.includes('house') || name.includes('congress');
+
+      return isKY && isDistrict6 && isHouse;
+    });
   }, [allRaces]);
 
   // 2. Filter Races based on User Selections
   const filteredRaces = useMemo(() => {
     return allRaces.filter((r) => {
       const isKY = r.isKentucky || String(r.state).toUpperCase() === 'KY' || String(r.name).toLowerCase().includes('kentucky');
-      
+      const cat = String(r.category || '');
+      const name = String(r.name || '').toLowerCase();
+
       // Category Tab Filter
       if (activeTab === 'ALL_KY' && !isKY) return false;
-      if (activeTab === 'FEDERAL' && !['U.S. Senate', 'U.S. House', 'Governor'].includes(r.category)) return false;
-      if (activeTab === 'LOCAL_KY' && (!isKY || ['U.S. Senate', 'U.S. House', 'Governor'].includes(r.category))) return false;
+      if (activeTab === 'SENATE' && !cat.includes('Senate') && !name.includes('senate')) return false;
+      if (activeTab === 'HOUSE' && !cat.includes('House') && !name.includes('house') && !name.includes('congress')) return false;
+      if (activeTab === 'LOCAL_KY' && (!isKY || cat.includes('Senate') || cat.includes('House') || cat === 'Governor')) return false;
 
-      // County Filter from Heatmap
+      // County Filter from Dropdown or Heatmap
       if (selectedCounty) {
         const hasCounty = (r.regions || []).some((reg) => 
           String(reg.name).toLowerCase().includes(selectedCounty.toLowerCase())
@@ -97,7 +121,7 @@ export default function App() {
         </p>
       </header>
 
-      {/* FEATURED RACE: KY-06 */}
+      {/* FEATURED TOP CARD: KY-06 */}
       {ky6Race && (
         <section style={{ marginBottom: '28px' }}>
           <div style={{ border: '2px solid #0056b3', borderRadius: '8px', padding: '20px', backgroundColor: '#f0f7ff' }}>
@@ -138,48 +162,84 @@ export default function App() {
         />
       </section>
 
-      {/* INTERACTIVE CONTROLS AND TAB FILTERS */}
+      {/* CATEGORY TABS & CONTROLS BAR */}
       <section style={{ marginBottom: '24px', backgroundColor: '#fff', padding: '16px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
           
-          {/* Category Tabs */}
-          <div style={{ display: 'flex', gap: '8px' }}>
+          {/* Tabs */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button
               onClick={() => setActiveTab('ALL_KY')}
               style={{ padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontWeight: 'bold', backgroundColor: activeTab === 'ALL_KY' ? '#0056b3' : '#e9ecef', color: activeTab === 'ALL_KY' ? '#fff' : '#333' }}
             >
-              All Kentucky Races (Federal + Local)
+              All Kentucky Races
             </button>
             <button
-              onClick={() => setActiveTab('FEDERAL')}
-              style={{ padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontWeight: 'bold', backgroundColor: activeTab === 'FEDERAL' ? '#0056b3' : '#e9ecef', color: activeTab === 'FEDERAL' ? '#fff' : '#333' }}
+              onClick={() => setActiveTab('SENATE')}
+              style={{ padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontWeight: 'bold', backgroundColor: activeTab === 'SENATE' ? '#0056b3' : '#e9ecef', color: activeTab === 'SENATE' ? '#fff' : '#333' }}
             >
-              U.S. Senate & House
+              U.S. Senate
+            </button>
+            <button
+              onClick={() => setActiveTab('HOUSE')}
+              style={{ padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontWeight: 'bold', backgroundColor: activeTab === 'HOUSE' ? '#0056b3' : '#e9ecef', color: activeTab === 'HOUSE' ? '#fff' : '#333' }}
+            >
+              U.S. House
             </button>
             <button
               onClick={() => setActiveTab('LOCAL_KY')}
               style={{ padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontWeight: 'bold', backgroundColor: activeTab === 'LOCAL_KY' ? '#0056b3' : '#e9ecef', color: activeTab === 'LOCAL_KY' ? '#fff' : '#333' }}
             >
-              KY County & Local Only
+              KY Local Only
             </button>
           </div>
 
-          {/* Search Input & County Reset */}
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* County Dropdown Selector + Text Search */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            
+            {/* Explicit County Dropdown Selector */}
+            <select
+              value={selectedCounty}
+              onChange={(e) => setSelectedCounty(e.target.value)}
+              style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #ccc', backgroundColor: '#fff', fontSize: '0.9rem', cursor: 'pointer' }}
+            >
+              <option value="">All Counties (KY)</option>
+              {KY_COUNTIES.map((county) => (
+                <option key={county} value={county}>
+                  {county} County
+                </option>
+              ))}
+            </select>
+
+            {/* Clear County Indicator if Selected */}
             {selectedCounty && (
-              <span style={{ backgroundColor: '#28a745', color: '#fff', padding: '6px 12px', borderRadius: '4px', fontSize: '0.9rem' }}>
-                County: {selectedCounty} <button onClick={() => setSelectedCounty('')} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
-              </span>
+              <button
+                onClick={() => setSelectedCounty('')}
+                style={{ padding: '8px 10px', borderRadius: '4px', border: 'none', backgroundColor: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
+                title="Clear county filter"
+              >
+                Clear County ✕
+              </button>
             )}
+
+            {/* Keyword Search Input */}
             <input
               type="text"
-              placeholder="Search candidate, race or county..."
+              placeholder="Search candidate or race..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '240px' }}
+              style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '220px' }}
             />
           </div>
         </div>
+      </section>
+
+      {/* SECTION HEADER (CLEAN TITLES) */}
+      <section style={{ marginBottom: '16px' }}>
+        <h2 style={{ fontSize: '1.5rem', margin: '0 0 16px 0' }}>
+          {activeTab === 'SENATE' ? 'U.S. Senate' : activeTab === 'HOUSE' ? 'U.S. House' : activeTab === 'LOCAL_KY' ? 'Kentucky Local Elections' : 'All Kentucky Elections'}
+          {selectedCounty ? ` — ${selectedCounty} County` : ''}
+        </h2>
       </section>
 
       {/* RACE RESULTS GRID */}
@@ -189,7 +249,7 @@ export default function App() {
             paginatedRaces.map((r) => <RaceCard key={r.id} race={r} />)
           ) : (
             <div style={{ gridColumn: '1 / -1', padding: '30px', textAlign: 'center', color: '#666' }}>
-              No races match your selected filters. Try clearing search or selected county.
+              No races match your selected county or search query.
             </div>
           )}
         </div>
