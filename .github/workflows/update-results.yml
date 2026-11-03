@@ -67,26 +67,18 @@ jobs:
       - name: Download worker artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: races-shard-*
-          path: shard-artifacts/
-          merge-multiple: false
+          path: shard-artifacts
 
       - name: Merge shard JSON files into data/races.json
         run: node scripts/merge.mjs
 
       - name: Build frontend static assets
-        run: |
-          if [ -f "package.json" ]; then
-            npm run build
-          elif [ -f "../package.json" ]; then
-            cd .. && npm run build
-          fi
+        run: npm run build
 
-      - name: Copy races.json to build output
+      - name: Ensure output directory and copy races.json
         run: |
-          mkdir -p dist/data public/data
-          cp data/races.json dist/data/races.json || true
-          cp data/races.json public/data/races.json || true
+          mkdir -p dist/data
+          cp data/races.json dist/data/races.json
 
       - name: Commit updated data back to git
         run: |
@@ -99,7 +91,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ hashFiles('dist/index.html') != '' && 'dist' || 'build' }}
+          path: 'dist'
 
       - name: Deploy to GitHub Pages
         id: deployment
