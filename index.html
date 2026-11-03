@@ -4,14 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kentucky Election Dashboard 2026</title>
+  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     .pin-btn:hover { transform: scale(1.1); }
+    .sort-header { cursor: pointer; user-select: none; }
+    .sort-header:hover { color: #2563eb; }
   </style>
 </head>
 <body class="bg-gray-100 text-gray-900 font-sans min-h-screen">
 
+  <!-- Header -->
   <header class="bg-slate-900 text-white p-6 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
       <div>
@@ -28,7 +33,56 @@
 
   <main class="max-w-7xl mx-auto p-4 md:p-6 space-y-8">
 
-    <!-- Overview Metrics -->
+    <!-- 1. Federal Seat Scoreboards (US Senate & US House Counters) -->
+    <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      
+      <!-- U.S. Senate Scoreboard -->
+      <div class="bg-slate-900 text-white rounded-xl shadow-md p-5 border border-slate-800">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="text-lg font-bold tracking-wide">U.S. Senate Counter</h3>
+          <span class="text-xs bg-slate-800 text-slate-300 px-2 py-1 rounded">Kentucky Seat</span>
+        </div>
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex-1 bg-slate-800 p-3 rounded-lg border-l-4 border-red-500 text-center">
+            <p class="text-xs text-slate-400 font-semibold uppercase">Republican</p>
+            <p id="senate-gop-count" class="text-2xl font-black text-red-500 mt-0.5">0</p>
+          </div>
+          <div class="flex-1 bg-slate-800 p-3 rounded-lg border-l-4 border-blue-500 text-center">
+            <p class="text-xs text-slate-400 font-semibold uppercase">Democrat</p>
+            <p id="senate-dem-count" class="text-2xl font-black text-blue-500 mt-0.5">0</p>
+          </div>
+          <div class="flex-1 bg-slate-800 p-3 rounded-lg border-l-4 border-amber-500 text-center">
+            <p class="text-xs text-slate-400 font-semibold uppercase">Other / Uncalled</p>
+            <p id="senate-other-count" class="text-2xl font-black text-amber-500 mt-0.5">1</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- U.S. House Scoreboard -->
+      <div class="bg-slate-900 text-white rounded-xl shadow-md p-5 border border-slate-800">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="text-lg font-bold tracking-wide">U.S. House Counter</h3>
+          <span class="text-xs bg-slate-800 text-slate-300 px-2 py-1 rounded">6 KY Districts</span>
+        </div>
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex-1 bg-slate-800 p-3 rounded-lg border-l-4 border-red-500 text-center">
+            <p class="text-xs text-slate-400 font-semibold uppercase">Republican</p>
+            <p id="house-gop-count" class="text-2xl font-black text-red-500 mt-0.5">0</p>
+          </div>
+          <div class="flex-1 bg-slate-800 p-3 rounded-lg border-l-4 border-blue-500 text-center">
+            <p class="text-xs text-slate-400 font-semibold uppercase">Democrat</p>
+            <p id="house-dem-count" class="text-2xl font-black text-blue-500 mt-0.5">0</p>
+          </div>
+          <div class="flex-1 bg-slate-800 p-3 rounded-lg border-l-4 border-amber-500 text-center">
+            <p class="text-xs text-slate-400 font-semibold uppercase">Other / Uncalled</p>
+            <p id="house-other-count" class="text-2xl font-black text-amber-500 mt-0.5">6</p>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- 2. Statewide Overview Summary -->
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
       <h2 class="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Statewide Summary</h2>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -47,7 +101,7 @@
       </div>
     </section>
 
-    <!-- Pinned Watch List -->
+    <!-- 3. Pinned Watch List -->
     <section class="space-y-4">
       <div class="flex items-center justify-between">
         <h2 class="text-xl font-bold text-gray-800">Pinned Watch List</h2>
@@ -56,7 +110,7 @@
       <div id="watchlist-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"></div>
     </section>
 
-    <!-- Vote Timeline -->
+    <!-- 4. Vote Reporting Velocity Timeline -->
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
       <h2 class="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Vote Reporting Velocity</h2>
       <div class="relative h-72 w-full">
@@ -64,7 +118,7 @@
       </div>
     </section>
 
-    <!-- Search & Comparison View -->
+    <!-- 5. Search, Filter & Comparison View -->
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
       <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 border-b pb-4">
         <div>
@@ -90,12 +144,12 @@
           <thead>
             <tr class="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider border-b">
               <th class="py-3 px-4 font-semibold w-12 text-center">Pin</th>
-              <th class="py-3 px-4 font-semibold">Contest / Region</th>
+              <th onclick="sortTable('name')" class="py-3 px-4 font-semibold sort-header">Contest / Region ↕</th>
               <th class="py-3 px-4 font-semibold">Category</th>
-              <th class="py-3 px-4 font-semibold text-center">Reporting %</th>
+              <th onclick="sortTable('rep')" class="py-3 px-4 font-semibold text-center sort-header">Reporting % ↕</th>
               <th class="py-3 px-4 font-semibold">Leader</th>
-              <th class="py-3 px-4 font-semibold text-right">Votes</th>
-              <th class="py-3 px-4 font-semibold text-right">Share (Margin)</th>
+              <th onclick="sortTable('votes')" class="py-3 px-4 font-semibold text-right sort-header">Votes ↕</th>
+              <th onclick="sortTable('margin')" class="py-3 px-4 font-semibold text-right sort-header">Share (Margin) ↕</th>
             </tr>
           </thead>
           <tbody id="county-table-body" class="divide-y divide-gray-100 text-sm"></tbody>
@@ -108,6 +162,7 @@
   <script>
     let rawData = null;
     let timelineChartInstance = null;
+    let currentSort = { column: 'name', dir: 'asc' };
 
     const defaultPinned = ['Jefferson', 'Franklin', 'Scott', 'U.S. Senate'];
     let pinnedItems = new Set(JSON.parse(localStorage.getItem('pinned_races')) || defaultPinned);
@@ -138,6 +193,48 @@
       }
     }
 
+    function getPartyBadge(partyStr) {
+      const p = (partyStr || '').toLowerCase();
+      if (p.includes('rep') || p === 'r') return 'bg-red-100 text-red-800 border-red-200';
+      if (p.includes('dem') || p === 'd') return 'bg-blue-100 text-blue-800 border-blue-200';
+      return 'bg-amber-100 text-amber-800 border-amber-200';
+    }
+
+    function updateCounters(races) {
+      let senateGOP = 0, senateDEM = 0, senateOther = 0;
+      let houseGOP = 0, houseDEM = 0, houseOther = 0;
+
+      races.forEach(race => {
+        const category = (race.category || race.type || '').toLowerCase();
+        const name = (race.name || '').toLowerCase();
+        const cands = [...(race.cands || [])].sort((a, b) => (b.v || 0) - (a.v || 0));
+        const leader = cands[0];
+        const party = (leader && leader.p) ? leader.p.toLowerCase() : '';
+
+        if (category.includes('senate') || name.includes('senate')) {
+          if (!leader || !leader.v) senateOther++;
+          else if (party.includes('rep') || party === 'r') senateGOP++;
+          else if (party.includes('dem') || party === 'd') senateDEM++;
+          else senateOther++;
+        }
+
+        if (category.includes('house') || name.includes('house') || name.includes('district') || category.includes('congress')) {
+          if (!leader || !leader.v) houseOther++;
+          else if (party.includes('rep') || party === 'r') houseGOP++;
+          else if (party.includes('dem') || party === 'd') houseDEM++;
+          else houseOther++;
+        }
+      });
+
+      document.getElementById('senate-gop-count').textContent = senateGOP;
+      document.getElementById('senate-dem-count').textContent = senateDEM;
+      document.getElementById('senate-other-count').textContent = senateOther;
+
+      document.getElementById('house-gop-count').textContent = houseGOP;
+      document.getElementById('house-dem-count').textContent = houseDEM;
+      document.getElementById('house-other-count').textContent = houseOther;
+    }
+
     function renderDashboard(data) {
       document.getElementById('last-updated').textContent = 'Updated: ' + new Date(data.updated).toLocaleTimeString();
       
@@ -160,10 +257,11 @@
       document.getElementById('avg-reporting').textContent = avgPr + '%';
       document.getElementById('total-votes').textContent = totalVotes.toLocaleString();
 
+      updateCounters(races);
+
       const itemMap = new Map();
 
       races.forEach(race => {
-        // Add root race contest (e.g. US Senate, US House)
         const raceKey = race.name || `Race #${race.id}`;
         itemMap.set(raceKey, {
           name: raceKey,
@@ -173,7 +271,6 @@
           type: 'Race'
         });
 
-        // Add sub-regions if available
         (race.regions || []).forEach(reg => {
           if (!reg.name) return;
           const countyKey = reg.name.trim();
@@ -217,6 +314,8 @@
         if (match && match.candidates.length) {
           const sorted = [...match.candidates].sort((a,b) => (b.v||0) - (a.v||0));
           const top = sorted[0];
+          const badgeStyle = getPartyBadge(top.p);
+
           card.innerHTML = `
             <div>
               <div class="flex justify-between items-center mb-2">
@@ -227,7 +326,10 @@
                 </div>
               </div>
               <p class="text-xs text-gray-500">Leader</p>
-              <p class="text-sm font-semibold text-gray-900 truncate">${top.n}</p>
+              <div class="flex items-center gap-2 mt-0.5">
+                <span class="text-sm font-semibold text-gray-900 truncate">${top.n}</span>
+                ${top.p ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded border ${badgeStyle}">${top.p}</span>` : ''}
+              </div>
             </div>
             <div class="mt-3 pt-2 border-t border-gray-100 flex justify-between items-center text-xs">
               <span class="text-gray-500">${(top.v||0).toLocaleString()} votes</span>
@@ -250,14 +352,38 @@
       });
     }
 
+    function sortTable(column) {
+      if (currentSort.column === column) {
+        currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        currentSort.column = column;
+        currentSort.dir = 'desc';
+      }
+      if (rawData) renderDashboard(rawData);
+    }
+
     function renderCountyTable(items) {
       const tbody = document.getElementById('county-table-body');
       tbody.innerHTML = '';
 
-      items.sort((a,b) => {
+      items.sort((a, b) => {
         const aPinned = pinnedItems.has(a.name) ? 1 : 0;
         const bPinned = pinnedItems.has(b.name) ? 1 : 0;
-        return bPinned - aPinned || a.name.localeCompare(b.name);
+        if (aPinned !== bPinned) return bPinned - aPinned;
+
+        const aSorted = [...(a.candidates || [])].sort((x,y) => (y.v||0) - (x.v||0));
+        const bSorted = [...(b.candidates || [])].sort((x,y) => (y.v||0) - (x.v||0));
+
+        const aLeader = aSorted[0] || { v: 0, pc: 0 };
+        const bLeader = bSorted[0] || { v: 0, pc: 0 };
+
+        let mult = currentSort.dir === 'asc' ? 1 : -1;
+
+        if (currentSort.column === 'name') return mult * a.name.localeCompare(b.name);
+        if (currentSort.column === 'rep') return mult * (a.rep - b.rep);
+        if (currentSort.column === 'votes') return mult * ((aLeader.v || 0) - (bLeader.v || 0));
+        if (currentSort.column === 'margin') return mult * ((aLeader.pc || 0) - (bLeader.pc || 0));
+        return 0;
       });
 
       items.forEach(c => {
@@ -266,12 +392,13 @@
         tr.className = isPinned ? 'bg-amber-50/40 hover:bg-amber-50' : 'hover:bg-gray-50';
 
         const sorted = [...(c.candidates || [])].sort((x,y) => (y.v||0) - (x.v||0));
-        const leader = sorted[0] || { n: 'N/A', v: 0, pc: 0 };
+        const leader = sorted[0] || { n: 'N/A', p: '', v: 0, pc: 0 };
         const runnerUp = sorted[1] || { v: 0, pc: 0 };
         const marginPct = (leader.pc && runnerUp.pc) ? (leader.pc - runnerUp.pc).toFixed(1) + '%' : '-';
 
         const starSymbol = isPinned ? '★' : '☆';
         const starClass = isPinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400';
+        const badgeStyle = getPartyBadge(leader.p);
 
         const candNames = (c.candidates || []).map(cand => cand.n || '').join(' ');
         const searchableText = `${c.name} ${c.category || ''} ${candNames}`.toLowerCase();
@@ -290,7 +417,12 @@
             <span class="px-2 py-1 rounded-md bg-gray-100 border border-gray-200">${c.category}</span>
           </td>
           <td class="py-3 px-4 text-center font-medium text-gray-700">${c.rep}%</td>
-          <td class="py-3 px-4 text-gray-800">${leader.n}</td>
+          <td class="py-3 px-4 text-gray-800">
+            <div class="flex items-center gap-2">
+              <span>${leader.n}</span>
+              ${leader.p ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded border ${badgeStyle}">${leader.p}</span>` : ''}
+            </div>
+          </td>
           <td class="py-3 px-4 text-right font-mono text-gray-700">${(leader.v || 0).toLocaleString()}</td>
           <td class="py-3 px-4 text-right font-semibold text-blue-600">${leader.pc ? leader.pc + '%' : ''} <span class="text-xs text-gray-400 font-normal">(${marginPct})</span></td>
         `;
