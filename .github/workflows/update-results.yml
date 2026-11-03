@@ -18,6 +18,7 @@ jobs:
   fetch-data:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false  # Prevents one failing worker from canceling all other 7
       max-parallel: 8
       matrix:
         worker: [0, 1, 2, 3, 4, 5, 6, 7]
@@ -32,7 +33,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install || true
 
       - name: Fetch race data for worker
         run: node scripts/fetch.mjs
@@ -48,6 +49,7 @@ jobs:
 
   merge-and-deploy:
     needs: fetch-data
+    if: always() # Continues even if a matrix worker uploaded an empty shard
     runs-on: ubuntu-latest
 
     steps:
@@ -60,7 +62,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install || true
 
       - name: Download all worker artifacts
         uses: actions/download-artifact@v4
