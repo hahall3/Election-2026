@@ -1,19 +1,38 @@
 name: Update results
+
 on:
-  schedule: [{ cron: '*/5 * * * *' }]
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
-permissions: { contents: write }
-concurrency: { group: update, cancel-in-progress: false }
+
 jobs:
   update:
     runs-on: ubuntu-latest
+    strategy:
+      # Runs up to 8 matrix workers simultaneously
+      max-parallel: 8
+      matrix:
+        worker: [0, 1, 2, 3, 4, 5, 6, 7]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: node scripts/fetch.mjs
-      - run: |
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch race data for assigned worker
+        run: node scripts/fetch.mjs
+        env:
+          WORKER_ID: ${{ matrix.worker }}
+          TOTAL_WORKERS: 8
+
+      - name: Commit and push worker result
+        run: |
           git config user.name "results-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add data/races.json
-          git diff --cached --quiet || (git commit -m "Update results" && git push)
+          git config user.email "results-bot@users.noreply.github.com"
+          git add data/races-${{ matrix.worker }}.json
+          git commit -m "Update race data (Worker ${{ matrix.worker }})" || echo "No changes to commit"
+          git push
