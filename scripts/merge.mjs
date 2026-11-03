@@ -1,65 +1,88 @@
-import { readdir, readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+// Election 2026 Initiative — merge worker shards into data/races.json.
+// - Reads every races-N.json found under shard-artifacts/ (flat or nested).
+// - Accepts shard files shaped as [...] or { races: [...] }.
+// - Carries forward the last good copy of any race missing from this run,
+//   so a failed or empty worker never wipes live results off the dashboard.
+// - Refuses to overwrite data/races.json when the merge yields zero races.
+import fs from 'node:fs';
+import path from 'node:path';
 
-async function mergeShards() {
-  const artifactDir = 'shard-artifacts';
-  let allRaces = [];
-  let totalFailed = 0;
-  let day = '2026-11-03';
+const ROOT = process.cwd();
+const SHARD_DIR = path.join(ROOT, process.env.SHARD_DIR || 'shard-artifacts');
+const OUT_FILE = path.join(ROOT, 'data', 'races.json');
 
-  // Find all races-*.json files inside downloaded artifact directories
-  const files = [];
-  async function findFiles(dir) {
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await findFiles(fullPath);
-      } else if (entry.name.startsWith('races-') && entry.name.endsWith('.json')) {
-        files.push(fullPath);
-      }
-    }
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    console.warn(`::warning::Unreadable JSON ${path.relative(ROOT, file)}: ${err.message}`);
+    return null;
   }
-
-  await findFiles(artifactDir);
-
-  for (const filePath of files) {
-    const content = await readFile(filePath, 'utf8');
-    const data = JSON.parse(content);
-    if (data.day) day = data.day;
-    if (data.failed) totalFailed += data.failed;
-    if (Array.isArray(data.races)) {
-      allRaces.push(...data.races);
-    }
-  }
-
-  // Deduplicate and sort races by ID
-  const map = new Map();
-  for (const race of allRaces) {
-    map.set(race.id, race);
-  }
-  const mergedRaces = Array.from(map.values()).sort((a, b) => a.id - b.id);
-
-  await mkdir('data', { recursive: true });
-  await writeFile(
-    'data/races.json',
-    JSON.stringify(
-      {
-        updated: new Date().toISOString(),
-        day,
-        state: 'US',
-        failed: totalFailed,
-        races: mergedRaces
-      },
-      null,
-      2
-    )
-  );
-
-  console.log(`Successfully merged ${mergedRaces.length} races into data/races.json`);
 }
 
-mergeShards().catch((err) => {
-  console.error('Failed to merge shards:', err);
-  process.exit(1);
-});
+function toRaceArray(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.races)) return payload.races;
+  return [];
+}
+
+function findShardFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...findShardFiles(full));
+    else if (/^races-\d+\.json$/.test(entry.name)) out.push(full);
+  }
+  return out.sort();
+}
+
+function raceKey(race) {
+  return String(race.id ?? `${race.category}|${race.state}|${race.district ?? ''}|${race.name}`);
+}
+
+// 1. Previously published data (top-level shape is preserved on write).
+const previousPayload = fs.existsSync(OUT_FILE) ? readJson(OUT_FILE) : null;
+const previousRaces = toRaceArray(previousPayload);
+const wrapped = previousPayload !== null && !Array.isArray(previousPayload);
+
+// 2. Fresh shard data from this run.
+const shardFiles = findShardFiles(SHARD_DIR);
+const fresh = new Map();
+for (const file of shardFiles) {
+  const races = toRaceArray(readJson(file));
+  console.log(`Shard ${path.relative(ROOT, file)}: ${races.length} races`);
+  for (const race of races) {
+    if (race && typeof race === 'object') fresh.set(raceKey(race), race);
+  }
+}
+
+// 3. Carry forward races the current run did not return (original order kept).
+const merged = new Map();
+let carried = 0;
+for (const race of previousRaces) {
+  const key = raceKey(race);
+  merged.set(key, fresh.get(key) ?? race);
+  if (!fresh.has(key)) carried += 1;
+}
+for (const [key, race] of fresh) {
+  if (!merged.has(key)) merged.set(key, race);
+}
+
+const races = [...merged.values()];
+
+console.log(
+  `Shard files: ${shardFiles.length} | fresh races: ${fresh.size} | carried forward: ${carried} | total: ${races.length}`
+);
+
+if (races.length === 0) {
+  console.warn('::warning::Merge produced 0 races. Leaving data/races.json untouched.');
+  process.exit(0);
+}
+
+const updated = new Date().toISOString();
+const output = wrapped ? { ...previousPayload, updated, races } : races;
+
+fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
+fs.writeFileSync(OUT_FILE, JSON.stringify(output, null, 2) + '\n');
+console.log(`Wrote ${path.relative(ROOT, OUT_FILE)} (${races.length} races)`);
