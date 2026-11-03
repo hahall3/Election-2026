@@ -1,4 +1,4 @@
-# Election 2026 Initiative — fetch, merge, build, deploy (GitHub Pages)
+# Election 2026 Initiative — discover, fetch, merge, build, deploy (GitHub Pages)
 name: Election 2026 Initiative Results
 
 on:
@@ -20,9 +20,35 @@ concurrency:
 env:
   TOTAL_WORKERS: 4
   ELECTION_DAY: '2026-11-03'
+  PREVIOUS_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/races.json
 
 jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Discover races (single nationwide search)
+        working-directory: ${{ github.workspace }}
+        env:
+          SEARCH_TIMEOUT_MS: 120000
+          SEARCH_RETRIES: 3
+        run: node scripts/discover.mjs
+
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest
+          path: data/manifest.json
+          retention-days: 1
+
   fetch:
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -35,6 +61,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Download manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: manifest
+          path: data/
 
       - name: Fetch shard
         working-directory: ${{ github.workspace }}
@@ -75,8 +107,6 @@ jobs:
 
       - name: Merge shards
         working-directory: ${{ github.workspace }}
-        env:
-          PREVIOUS_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/races.json
         run: node scripts/merge.mjs
 
       - name: Build
