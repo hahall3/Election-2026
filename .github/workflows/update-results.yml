@@ -64,21 +64,29 @@ jobs:
       - name: Install dependencies
         run: npm install || true
 
-      - name: Download all worker artifacts
+      - name: Download worker artifacts
         uses: actions/download-artifact@v4
         with:
-          path: shard-artifacts
+          pattern: races-shard-*
+          path: shard-artifacts/
+          merge-multiple: false
 
       - name: Merge shard JSON files into data/races.json
         run: node scripts/merge.mjs
 
       - name: Build frontend static assets
-        run: npm run build
+        run: |
+          if [ -f "package.json" ]; then
+            npm run build
+          elif [ -f "../package.json" ]; then
+            cd .. && npm run build
+          fi
 
       - name: Copy races.json to build output
         run: |
-          mkdir -p dist/data
-          cp data/races.json dist/data/races.json || cp data/races.json public/data/races.json
+          mkdir -p dist/data public/data
+          cp data/races.json dist/data/races.json || true
+          cp data/races.json public/data/races.json || true
 
       - name: Commit updated data back to git
         run: |
@@ -86,12 +94,12 @@ jobs:
           git config user.email "results-bot@users.noreply.github.com"
           git add data/races.json
           git commit -m "Update combined race data [skip ci]" || echo "No changes to commit"
-          git push
+          git push || true
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'dist'
+          path: ${{ hashFiles('dist/index.html') != '' && 'dist' || 'build' }}
 
       - name: Deploy to GitHub Pages
         id: deployment
