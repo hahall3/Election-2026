@@ -7,7 +7,7 @@ async function mergeShards() {
   let totalFailed = 0;
   let day = '2026-11-03';
 
-  // Find all races-*.json files inside the downloaded artifact folders
+  // Find all races-*.json files inside downloaded artifact directories
   const files = [];
   async function findFiles(dir) {
     const entries = await readdir(dir, { withFileTypes: true });
@@ -47,7 +47,7 @@ async function mergeShards() {
       {
         updated: new Date().toISOString(),
         day,
-        state: 'KY',
+        state: 'US',
         failed: totalFailed,
         races: mergedRaces
       },
