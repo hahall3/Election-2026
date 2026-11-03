@@ -57,13 +57,34 @@ for (const file of shardFiles) {
   }
 }
 
+// History accumulation: fetch.mjs emits a single snapshot per run; append it
+// to the previously published history, skipping unchanged snapshots.
+const MAX_HISTORY = Number(process.env.MAX_HISTORY || 300);
+const snapshotSig = (s) => JSON.stringify([s?.reporting, (s?.candidates || []).map((c) => [c.n, c.v])]);
+
+function mergeHistory(prevRace, nextRace) {
+  const prev = Array.isArray(prevRace?.history) ? prevRace.history : [];
+  const next = Array.isArray(nextRace?.history) ? nextRace.history : [];
+  const out = [...prev];
+  for (const snap of next) {
+    const last = out[out.length - 1];
+    if (!last || snapshotSig(last) !== snapshotSig(snap)) out.push(snap);
+  }
+  return out.slice(-MAX_HISTORY);
+}
+
 // 3. Carry forward races the current run did not return (original order kept).
 const merged = new Map();
 let carried = 0;
 for (const race of previousRaces) {
   const key = raceKey(race);
-  merged.set(key, fresh.get(key) ?? race);
-  if (!fresh.has(key)) carried += 1;
+  const next = fresh.get(key);
+  if (next) {
+    merged.set(key, { ...next, history: mergeHistory(race, next) });
+  } else {
+    merged.set(key, race);
+    carried += 1;
+  }
 }
 for (const [key, race] of fresh) {
   if (!merged.has(key)) merged.set(key, race);
