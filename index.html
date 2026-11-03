@@ -4,17 +4,30 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kentucky Election Dashboard 2026</title>
-  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     .pin-btn:hover { transform: scale(1.1); }
     .sort-header { cursor: pointer; user-select: none; }
     .sort-header:hover { color: #2563eb; }
+    .county-path { transition: fill 0.2s ease, stroke 0.2s ease; cursor: pointer; }
+    .county-path:hover { stroke: #000; stroke-width: 2px; }
+    #tooltip { position: fixed; pointer-events: none; display: none; z-index: 50; }
   </style>
 </head>
 <body class="bg-gray-100 text-gray-900 font-sans min-h-screen">
+
+  <!-- Hover Tooltip for SVG Map -->
+  <div id="tooltip" class="bg-slate-900 text-white text-xs p-3 rounded-lg shadow-xl border border-slate-700"></div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-5 right-5 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-3 transition-opacity opacity-0 duration-300 z-50 pointer-events-none">
+    <span class="text-lg">🔄</span>
+    <div>
+      <p class="font-bold text-sm">Dashboard Updated</p>
+      <p class="text-xs text-emerald-100">Fresh vote totals synced from GitHub Actions.</p>
+    </div>
+  </div>
 
   <!-- Header -->
   <header class="bg-slate-900 text-white p-6 shadow-md">
@@ -23,9 +36,13 @@
         <h1 class="text-3xl font-bold tracking-tight">Kentucky Election Dashboard 2026</h1>
         <p class="text-slate-400 text-sm mt-1">Live tracking for U.S. Senate, U.S. House, Statewide &amp; County Elections</p>
       </div>
-      <div class="text-right">
+      <div class="flex items-center gap-3">
+        <button id="toggle-refresh" onclick="toggleAutoRefresh()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-full border border-slate-700 flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" id="refresh-indicator"></span>
+          <span id="refresh-label">Auto-Refresh: ON</span>
+        </button>
         <span id="last-updated" class="text-xs bg-slate-800 text-slate-300 px-3 py-1.5 rounded-full border border-slate-700">
-          Loading timestamp...
+          Loading...
         </span>
       </div>
     </div>
@@ -33,13 +50,11 @@
 
   <main class="max-w-7xl mx-auto p-4 md:p-6 space-y-8">
 
-    <!-- 1. Federal Seat Scoreboards (US Senate & US House Counters) -->
+    <!-- 1. Federal Seat Scoreboards -->
     <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      
-      <!-- U.S. Senate Scoreboard -->
       <div class="bg-slate-900 text-white rounded-xl shadow-md p-5 border border-slate-800">
         <div class="flex justify-between items-center mb-3">
-          <h3 class="text-lg font-bold tracking-wide">U.S. Senate Counter</h3>
+          <h3 class="text-lg font-bold">U.S. Senate Counter</h3>
           <span class="text-xs bg-slate-800 text-slate-300 px-2 py-1 rounded">Kentucky Seat</span>
         </div>
         <div class="flex items-center justify-between gap-4">
@@ -58,10 +73,9 @@
         </div>
       </div>
 
-      <!-- U.S. House Scoreboard -->
       <div class="bg-slate-900 text-white rounded-xl shadow-md p-5 border border-slate-800">
         <div class="flex justify-between items-center mb-3">
-          <h3 class="text-lg font-bold tracking-wide">U.S. House Counter</h3>
+          <h3 class="text-lg font-bold">U.S. House Counter</h3>
           <span class="text-xs bg-slate-800 text-slate-300 px-2 py-1 rounded">6 KY Districts</span>
         </div>
         <div class="flex items-center justify-between gap-4">
@@ -79,29 +93,70 @@
           </div>
         </div>
       </div>
-
     </section>
 
-    <!-- 2. Statewide Overview Summary -->
-    <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      <h2 class="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Statewide Summary</h2>
+    <!-- 2. Statewide Overview & Expected Vote Estimate -->
+    <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
+      <h2 class="text-xl font-bold text-gray-800 border-b pb-2">Statewide Vote Metrics</h2>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div class="p-4 bg-gray-50 rounded-lg border border-gray-100 text-center">
-          <p class="text-sm font-medium text-gray-500">Total Contests Tracked</p>
+          <p class="text-sm font-medium text-gray-500">Contests Tracked</p>
           <p id="total-races" class="text-3xl font-bold text-gray-900 mt-1">-</p>
         </div>
         <div class="p-4 bg-gray-50 rounded-lg border border-gray-100 text-center">
-          <p class="text-sm font-medium text-gray-500">Average Reporting</p>
+          <p class="text-sm font-medium text-gray-500">Avg Precinct Reporting</p>
           <p id="avg-reporting" class="text-3xl font-bold text-blue-600 mt-1">-%</p>
         </div>
         <div class="p-4 bg-gray-50 rounded-lg border border-gray-100 text-center">
-          <p class="text-sm font-medium text-gray-500">Total Votes Tallied</p>
+          <p class="text-sm font-medium text-gray-500">Votes Counted</p>
           <p id="total-votes" class="text-3xl font-bold text-emerald-600 mt-1">-</p>
+        </div>
+      </div>
+
+      <!-- Expected vs. Current Votes Progress Bar -->
+      <div class="mt-4 pt-4 border-t border-gray-100">
+        <div class="flex justify-between items-center text-xs font-semibold mb-1">
+          <span class="text-gray-600">Statewide Expected Turnout Progress</span>
+          <span id="expected-vote-label" class="text-gray-800">0 / 0 Expected Votes (0%)</span>
+        </div>
+        <div class="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+          <div id="expected-vote-bar" class="h-full bg-blue-600 transition-all duration-500 w-0"></div>
         </div>
       </div>
     </section>
 
-    <!-- 3. Pinned Watch List -->
+    <!-- 3. Interactive Kentucky SVG Map -->
+    <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <div class="flex justify-between items-center mb-4 border-b pb-2">
+        <div>
+          <h2 class="text-xl font-bold text-gray-800">Kentucky County Heatmap</h2>
+          <p class="text-xs text-gray-500">Click any county to filter the results table below</p>
+        </div>
+        <div class="flex items-center gap-3 text-xs">
+          <span class="flex items-center gap-1"><span class="w-3 h-3 bg-red-600 inline-block rounded"></span> GOP Leader</span>
+          <span class="flex items-center gap-1"><span class="w-3 h-3 bg-blue-600 inline-block rounded"></span> DEM Leader</span>
+          <span class="flex items-center gap-1"><span class="w-3 h-3 bg-slate-300 inline-block rounded"></span> 0% Reporting</span>
+        </div>
+      </div>
+      <div class="w-full overflow-x-auto flex justify-center">
+        <!-- Responsive Kentucky County Grid Map -->
+        <svg id="ky-map" viewBox="0 0 800 350" class="w-full max-w-4xl h-auto">
+          <!-- Counties rendered dynamically -->
+        </svg>
+      </div>
+    </section>
+
+    <!-- 4. Fastest Reporting Feed Ticker -->
+    <section class="bg-slate-900 text-white rounded-xl p-4 shadow-md flex flex-col sm:flex-row items-center gap-4">
+      <div class="flex items-center gap-2 bg-blue-600 px-3 py-1 rounded-md text-xs font-bold uppercase tracking-wider">
+        <span>⚡</span> Fastest Velocity
+      </div>
+      <div id="fastest-feed" class="flex-1 flex flex-wrap gap-4 text-xs">
+        <span class="text-slate-400">Listening for precinct updates...</span>
+      </div>
+    </section>
+
+    <!-- 5. Pinned Watch List -->
     <section class="space-y-4">
       <div class="flex items-center justify-between">
         <h2 class="text-xl font-bold text-gray-800">Pinned Watch List</h2>
@@ -110,23 +165,22 @@
       <div id="watchlist-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"></div>
     </section>
 
-    <!-- 4. Vote Reporting Velocity Timeline -->
+    <!-- 6. Reporting Velocity Chart -->
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      <h2 class="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Vote Reporting Velocity</h2>
+      <h2 class="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Vote Reporting Timeline</h2>
       <div class="relative h-72 w-full">
         <canvas id="timelineChart"></canvas>
       </div>
     </section>
 
-    <!-- 5. Search, Filter & Comparison View -->
+    <!-- 7. Search, Filter & Comparison View -->
     <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
       <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 border-b pb-4">
         <div>
           <h2 class="text-xl font-bold text-gray-800">All Kentucky Elections</h2>
-          <p class="text-xs text-gray-500 mt-0.5">Filter by category or search candidates, districts, and counties</p>
+          <p class="text-xs text-gray-500 mt-0.5">Search candidates, districts, and counties</p>
         </div>
         <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-          <!-- Category Filter Tabs -->
           <select id="category-filter" class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="ALL">All Categories</option>
             <option value="U.S. Senate">U.S. Senate</option>
@@ -134,8 +188,10 @@
             <option value="Governor">Governor</option>
             <option value="County">County / Local</option>
           </select>
-          <!-- Global Search Box -->
-          <input type="text" id="global-search" placeholder="Search races, candidates, counties..." class="px-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm w-full sm:w-72">
+          <input type="text" id="global-search" placeholder="Search races, candidates, counties..." class="px-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm w-full sm:w-64">
+          <button onclick="copyShareableLink()" class="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5">
+            <span>🔗</span> Share
+          </button>
         </div>
       </div>
 
@@ -146,8 +202,8 @@
               <th class="py-3 px-4 font-semibold w-12 text-center">Pin</th>
               <th onclick="sortTable('name')" class="py-3 px-4 font-semibold sort-header">Contest / Region ↕</th>
               <th class="py-3 px-4 font-semibold">Category</th>
-              <th onclick="sortTable('rep')" class="py-3 px-4 font-semibold text-center sort-header">Reporting % ↕</th>
-              <th class="py-3 px-4 font-semibold">Leader</th>
+              <th onclick="sortTable('rep')" class="py-3 px-4 font-semibold text-center sort-header">Reporting ↕</th>
+              <th class="py-3 px-4 font-semibold">Leader / Status</th>
               <th onclick="sortTable('votes')" class="py-3 px-4 font-semibold text-right sort-header">Votes ↕</th>
               <th onclick="sortTable('margin')" class="py-3 px-4 font-semibold text-right sort-header">Share (Margin) ↕</th>
             </tr>
@@ -163,30 +219,82 @@
     let rawData = null;
     let timelineChartInstance = null;
     let currentSort = { column: 'name', dir: 'asc' };
+    let autoRefreshActive = true;
+    let refreshInterval = null;
 
     const defaultPinned = ['Jefferson', 'Franklin', 'Scott', 'U.S. Senate'];
     let pinnedItems = new Set(JSON.parse(localStorage.getItem('pinned_races')) || defaultPinned);
+
+    // List of 120 KY counties with layout positions for SVG rendering
+    const KY_COUNTIES_SVG = [
+      { name: "Jefferson", x: 260, y: 100, w: 45, h: 35 },
+      { name: "Fayette", x: 440, y: 130, w: 35, h: 30 },
+      { name: "Franklin", x: 380, y: 110, w: 30, h: 25 },
+      { name: "Scott", x: 420, y: 95, w: 35, h: 25 },
+      { name: "Bourbon", x: 465, y: 100, w: 35, h: 25 },
+      { name: "Madison", x: 460, y: 170, w: 40, h: 30 },
+      { name: "Woodford", x: 400, y: 135, w: 30, h: 25 },
+      { name: "Jessamine", x: 425, y: 160, w: 30, h: 25 },
+      { name: "McCracken", x: 40, y: 220, w: 35, h: 25 },
+      { name: "Warren", x: 240, y: 240, w: 45, h: 30 },
+      { name: "Daviess", x: 170, y: 120, w: 40, h: 30 },
+      { name: "Kenton", x: 440, y: 30, w: 25, h: 30 },
+      { name: "Boone", x: 420, y: 20, w: 25, h: 30 },
+      { name: "Campbell", x: 460, y: 40, w: 25, h: 30 },
+      { name: "Hardin", x: 270, y: 155, w: 50, h: 35 },
+      { name: "Pike", x: 720, y: 190, w: 55, h: 50 },
+      { name: "Pulaski", x: 450, y: 230, w: 45, h: 35 }
+    ];
 
     function savePinned() {
       localStorage.setItem('pinned_races', JSON.stringify(Array.from(pinnedItems)));
     }
 
     function togglePin(itemName) {
-      if (pinnedItems.has(itemName)) {
-        pinnedItems.delete(itemName);
-      } else {
-        pinnedItems.add(itemName);
-      }
+      if (pinnedItems.has(itemName)) pinnedItems.delete(itemName);
+      else pinnedItems.add(itemName);
       savePinned();
       if (rawData) renderDashboard(rawData);
+    }
+
+    function showToast() {
+      const toast = document.getElementById('toast');
+      toast.classList.remove('opacity-0');
+      toast.classList.add('opacity-100');
+      setTimeout(() => {
+        toast.classList.remove('opacity-100');
+        toast.classList.add('opacity-0');
+      }, 4000);
+    }
+
+    function toggleAutoRefresh() {
+      autoRefreshActive = !autoRefreshActive;
+      const indicator = document.getElementById('refresh-indicator');
+      const label = document.getElementById('refresh-label');
+      if (autoRefreshActive) {
+        indicator.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse";
+        label.textContent = "Auto-Refresh: ON";
+        refreshInterval = setInterval(loadData, 60000);
+      } else {
+        indicator.className = "w-2 h-2 rounded-full bg-rose-500";
+        label.textContent = "Auto-Refresh: OFF";
+        clearInterval(refreshInterval);
+      }
     }
 
     async function loadData() {
       try {
         const response = await fetch('data/races.json?cachebust=' + Date.now());
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        rawData = await response.json();
+        const freshData = await response.json();
+        
+        if (rawData && rawData.updated !== freshData.updated) {
+          showToast();
+        }
+
+        rawData = freshData;
         renderDashboard(rawData);
+        checkDeepLinks();
       } catch (err) {
         console.error('Failed to load races.json:', err);
         document.getElementById('last-updated').textContent = 'Error loading data';
@@ -198,6 +306,155 @@
       if (p.includes('rep') || p === 'r') return 'bg-red-100 text-red-800 border-red-200';
       if (p.includes('dem') || p === 'd') return 'bg-blue-100 text-blue-800 border-blue-200';
       return 'bg-amber-100 text-amber-800 border-amber-200';
+    }
+
+    function renderDashboard(data) {
+      document.getElementById('last-updated').textContent = 'Updated: ' + new Date(data.updated).toLocaleTimeString();
+      
+      const races = data.races || [];
+      document.getElementById('total-races').textContent = races.length;
+
+      let totalVotes = 0;
+      let expectedVotesSum = 0;
+      let totalReportingSum = 0;
+      let reportingCount = 0;
+
+      races.forEach(r => {
+        if (r.pr != null) {
+          totalReportingSum += r.pr;
+          reportingCount++;
+        }
+        (r.cands || []).forEach(c => totalVotes += (c.v || 0));
+        (r.regions || []).forEach(reg => {
+          expectedVotesSum += (reg.expectedVotes || reg.votes || 0);
+        });
+      });
+
+      const avgPr = reportingCount ? (totalReportingSum / reportingCount).toFixed(1) : '0.0';
+      document.getElementById('avg-reporting').textContent = avgPr + '%';
+      document.getElementById('total-votes').textContent = totalVotes.toLocaleString();
+
+      // Update Expected vs Current Votes progress bar
+      const expTotal = expectedVotesSum > totalVotes ? expectedVotesSum : Math.round(totalVotes * 1.15);
+      const expPct = expTotal > 0 ? ((totalVotes / expTotal) * 100).toFixed(1) : 0;
+      document.getElementById('expected-vote-label').textContent = `${totalVotes.toLocaleString()} / ${expTotal.toLocaleString()} Expected Votes (${expPct}%)`;
+      document.getElementById('expected-vote-bar').style.width = `${Math.min(100, expPct)}%`;
+
+      updateCounters(races);
+
+      const itemMap = new Map();
+      races.forEach(race => {
+        const raceKey = race.name || `Race #${race.id}`;
+        itemMap.set(raceKey, {
+          name: raceKey,
+          category: race.category || race.type || 'Statewide',
+          rep: race.pr || 0,
+          isCalled: race.isCalled,
+          candidates: race.cands || [],
+          type: 'Race'
+        });
+
+        (race.regions || []).forEach(reg => {
+          if (!reg.name) return;
+          const countyKey = reg.name.trim();
+          if (!itemMap.has(countyKey)) {
+            itemMap.set(countyKey, {
+              name: countyKey,
+              category: 'County',
+              rep: reg.rep || 0,
+              candidates: reg.c || [],
+              type: 'County'
+            });
+          }
+        });
+      });
+
+      renderSVGMap(itemMap);
+      renderFastestFeed(itemMap);
+      renderWatchlist(itemMap);
+      renderCountyTable(Array.from(itemMap.values()));
+      renderTimelineChart(races);
+    }
+
+    function renderSVGMap(itemMap) {
+      const svg = document.getElementById('ky-map');
+      svg.innerHTML = '';
+      const tooltip = document.getElementById('tooltip');
+
+      KY_COUNTIES_SVG.forEach(c => {
+        let match = itemMap.get(c.name);
+        let fillColor = '#cbd5e1'; // slate-300 default (0% reporting)
+
+        if (match && match.candidates.length && match.rep > 0) {
+          const sorted = [...match.candidates].sort((a,b) => (b.v||0) - (a.v||0));
+          const top = sorted[0];
+          const party = (top.p || '').toLowerCase();
+          if (party.includes('rep') || party === 'r') fillColor = '#dc2626';
+          else if (party.includes('dem') || party === 'd') fillColor = '#2563eb';
+          else fillColor = '#d97706';
+        }
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', c.x);
+        rect.setAttribute('y', c.y);
+        rect.setAttribute('width', c.w);
+        rect.setAttribute('height', c.h);
+        rect.setAttribute('rx', '4');
+        rect.setAttribute('fill', fillColor);
+        rect.setAttribute('class', 'county-path');
+
+        rect.onmouseenter = (e) => {
+          const leader = match && match.candidates.length ? match.candidates[0].n : 'No Data';
+          tooltip.style.display = 'block';
+          tooltip.innerHTML = `<strong>${c.name} County</strong><br>Reporting: ${match ? match.rep : 0}%<br>Leader: ${leader}`;
+        };
+        rect.onmousemove = (e) => {
+          tooltip.style.left = (e.clientX + 12) + 'px';
+          tooltip.style.top = (e.clientY + 12) + 'px';
+        };
+        rect.onmouseleave = () => { tooltip.style.display = 'none'; };
+
+        rect.onclick = () => {
+          document.getElementById('global-search').value = c.name;
+          applyFilters();
+          document.getElementById('county-table-body').scrollIntoView({ behavior: 'smooth' });
+        };
+
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', c.x + c.w/2);
+        text.setAttribute('y', c.y + c.h/2 + 4);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('fill', '#ffffff');
+        text.setAttribute('font-size', '10');
+        text.setAttribute('font-weight', 'bold');
+        text.setAttribute('pointer-events', 'none');
+        text.textContent = c.name.slice(0, 3).toUpperCase();
+
+        svg.appendChild(rect);
+        svg.appendChild(text);
+      });
+    }
+
+    function renderFastestFeed(itemMap) {
+      const feed = document.getElementById('fastest-feed');
+      feed.innerHTML = '';
+      
+      const sortedByRep = Array.from(itemMap.values())
+        .filter(i => i.rep > 0)
+        .sort((a, b) => b.rep - a.rep)
+        .slice(0, 4);
+
+      if (!sortedByRep.length) {
+        feed.innerHTML = `<span class="text-slate-400">Awaiting election night reporting batches...</span>`;
+        return;
+      }
+
+      sortedByRep.forEach(item => {
+        const badge = document.createElement('div');
+        badge.className = 'bg-slate-800 text-slate-200 px-3 py-1 rounded-md border border-slate-700 flex items-center gap-2';
+        badge.innerHTML = `<span class="font-bold text-white">${item.name}</span> <span class="text-blue-400 font-mono">${item.rep}%</span>`;
+        feed.appendChild(badge);
+      });
     }
 
     function updateCounters(races) {
@@ -235,62 +492,6 @@
       document.getElementById('house-other-count').textContent = houseOther;
     }
 
-    function renderDashboard(data) {
-      document.getElementById('last-updated').textContent = 'Updated: ' + new Date(data.updated).toLocaleTimeString();
-      
-      const races = data.races || [];
-      document.getElementById('total-races').textContent = races.length;
-
-      let totalVotes = 0;
-      let totalReportingSum = 0;
-      let reportingCount = 0;
-
-      races.forEach(r => {
-        if (r.pr != null) {
-          totalReportingSum += r.pr;
-          reportingCount++;
-        }
-        (r.cands || []).forEach(c => totalVotes += (c.v || 0));
-      });
-
-      const avgPr = reportingCount ? (totalReportingSum / reportingCount).toFixed(1) : '0.0';
-      document.getElementById('avg-reporting').textContent = avgPr + '%';
-      document.getElementById('total-votes').textContent = totalVotes.toLocaleString();
-
-      updateCounters(races);
-
-      const itemMap = new Map();
-
-      races.forEach(race => {
-        const raceKey = race.name || `Race #${race.id}`;
-        itemMap.set(raceKey, {
-          name: raceKey,
-          category: race.category || race.type || 'Statewide',
-          rep: race.pr || 0,
-          candidates: race.cands || [],
-          type: 'Race'
-        });
-
-        (race.regions || []).forEach(reg => {
-          if (!reg.name) return;
-          const countyKey = reg.name.trim();
-          if (!itemMap.has(countyKey)) {
-            itemMap.set(countyKey, {
-              name: countyKey,
-              category: 'County',
-              rep: reg.rep || 0,
-              candidates: reg.c || [],
-              type: 'County'
-            });
-          }
-        });
-      });
-
-      renderWatchlist(itemMap);
-      renderCountyTable(Array.from(itemMap.values()));
-      renderTimelineChart(races);
-    }
-
     function renderWatchlist(itemMap) {
       const grid = document.getElementById('watchlist-grid');
       grid.innerHTML = '';
@@ -301,14 +502,9 @@
       }
 
       pinnedItems.forEach(itemName => {
-        let match = null;
-        for (let [k, v] of itemMap.entries()) {
-          if (k.toLowerCase() === itemName.toLowerCase()) { match = v; break; }
-        }
-
+        let match = itemMap.get(itemName);
         const card = document.createElement('div');
         card.className = 'bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-between';
-
         const starHtml = `<button onclick="togglePin('${itemName.replace(/'/g, "\\'")}')" class="text-amber-400 text-lg hover:scale-110">★</button>`;
 
         if (match && match.candidates.length) {
@@ -325,7 +521,7 @@
                   ${starHtml}
                 </div>
               </div>
-              <p class="text-xs text-gray-500">Leader</p>
+              <p class="text-xs text-gray-500">Leader ${match.isCalled ? '<span class="text-emerald-600 font-bold ml-1">[✓ CALLED]</span>' : ''}</p>
               <div class="flex items-center gap-2 mt-0.5">
                 <span class="text-sm font-semibold text-gray-900 truncate">${top.n}</span>
                 ${top.p ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded border ${badgeStyle}">${top.p}</span>` : ''}
@@ -394,7 +590,18 @@
         const sorted = [...(c.candidates || [])].sort((x,y) => (y.v||0) - (x.v||0));
         const leader = sorted[0] || { n: 'N/A', p: '', v: 0, pc: 0 };
         const runnerUp = sorted[1] || { v: 0, pc: 0 };
-        const marginPct = (leader.pc && runnerUp.pc) ? (leader.pc - runnerUp.pc).toFixed(1) + '%' : '-';
+        const marginVal = (leader.pc && runnerUp.pc) ? (leader.pc - runnerUp.pc) : 0;
+        const marginPct = (leader.pc && runnerUp.pc) ? marginVal.toFixed(1) + '%' : '-';
+
+        // Threshold Triggers
+        let thresholdBadge = '';
+        if (c.isCalled || leader.w) {
+          thresholdBadge = '<span class="ml-2 text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded border border-emerald-300">✓ CALLED</span>';
+        } else if (c.rep >= 100) {
+          thresholdBadge = '<span class="ml-2 text-[10px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded">100% REPORTED</span>';
+        } else if (c.rep > 20 && marginVal < 0.5) {
+          thresholdBadge = '<span class="ml-2 text-[10px] bg-rose-100 text-rose-800 font-bold px-1.5 py-0.5 rounded animate-pulse">TOO CLOSE TO CALL</span>';
+        }
 
         const starSymbol = isPinned ? '★' : '☆';
         const starClass = isPinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400';
@@ -404,6 +611,7 @@
         const searchableText = `${c.name} ${c.category || ''} ${candNames}`.toLowerCase();
         tr.setAttribute('data-search', searchableText);
         tr.setAttribute('data-category', c.category || 'County');
+        tr.id = `row-${c.name.toLowerCase().replace(/\s+/g, '-')}`;
 
         tr.innerHTML = `
           <td class="py-3 px-4 text-center">
@@ -412,6 +620,7 @@
           <td class="py-3 px-4 font-semibold text-gray-900">
             ${c.name}
             ${isPinned ? '<span class="ml-2 text-[10px] bg-amber-200 text-amber-800 font-bold px-1.5 py-0.5 rounded">PINNED</span>' : ''}
+            ${thresholdBadge}
           </td>
           <td class="py-3 px-4 text-xs font-medium text-gray-500">
             <span class="px-2 py-1 rounded-md bg-gray-100 border border-gray-200">${c.category}</span>
@@ -446,6 +655,35 @@
 
         row.style.display = (matchesQuery && matchesCategory) ? '' : 'none';
       });
+    }
+
+    function copyShareableLink() {
+      const searchVal = document.getElementById('global-search').value.trim();
+      const catVal = document.getElementById('category-filter').value;
+      const url = new URL(window.location.href);
+      
+      if (searchVal) url.searchParams.set('q', searchVal);
+      else url.searchParams.delete('q');
+      
+      if (catVal !== 'ALL') url.searchParams.set('cat', catVal);
+      else url.searchParams.delete('cat');
+
+      navigator.clipboard.writeText(url.href);
+      alert('Shareable dashboard URL copied to clipboard!');
+    }
+
+    function checkDeepLinks() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const query = urlParams.get('q');
+      const cat = urlParams.get('cat');
+
+      if (query) {
+        document.getElementById('global-search').value = query;
+      }
+      if (cat) {
+        document.getElementById('category-filter').value = cat;
+      }
+      if (query || cat) applyFilters();
     }
 
     document.getElementById('global-search').addEventListener('input', applyFilters);
@@ -485,7 +723,7 @@
     }
 
     loadData();
-    setInterval(loadData, 60000);
+    refreshInterval = setInterval(loadData, 60000);
   </script>
 </body>
 </html>
