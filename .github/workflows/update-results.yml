@@ -70,17 +70,21 @@ jobs:
           path: shard-artifacts
 
       - name: Merge shard JSON files into data/races.json
+        working-directory: ${{ github.workspace }}
         run: node scripts/merge.mjs
 
       - name: Build frontend static assets
+        working-directory: ${{ github.workspace }}
         run: npm run build
 
       - name: Ensure output directory and copy races.json
+        working-directory: ${{ github.workspace }}
         run: |
           mkdir -p dist/data
           cp data/races.json dist/data/races.json
 
       - name: Commit updated data back to git
+        working-directory: ${{ github.workspace }}
         run: |
           git config user.name "results-bot"
           git config user.email "results-bot@users.noreply.github.com"
