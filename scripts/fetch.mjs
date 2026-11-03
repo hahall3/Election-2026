@@ -1,15 +1,13 @@
-// Pulls all Kentucky races, US Senate, US Governor, and US House races for ELECTION_DAY from civicAPI.
+// Pulls all Kentucky races, US Senate, US House, and Governor for ELECTION_DAY from civicAPI.
 import { writeFile, mkdir } from 'node:fs/promises';
 
 const BASE = process.env.CIVIC_BASE || 'https://civicapi.org/api/v2/';
 const DAY = process.env.ELECTION_DAY || '2026-11-03';
 
-// Explicitly include US Senate, US House, and Governor alongside state/local terms
-const MARQUEE_RACES = ['u.s. senate', 'us senate', 'senate', 'governor', 'u.s. house', 'us house', 'congress'];
 const KEYWORDS = [
-  ...MARQUEE_RACES,
-  'president', 'attorney general', 'secretary of state', 'treasurer', 'auditor', 
-  'commissioner', 'judge', 'fiscal court', 'sheriff', 'clerk', 'jailer', 'coroner'
+  'president', 'u.s. senate', 'us senate', 'senate', 'governor', 'u.s. house', 'us house', 'congress',
+  'attorney general', 'secretary of state', 'treasurer', 'auditor', 'commissioner', 'judge',
+  'fiscal court', 'sheriff', 'clerk', 'jailer', 'coroner', 'assessor', 'surveyor'
 ];
 const TYPES = ['federal', 'governor', 'state house', 'state senate', 'county', 'local', 'municipal'];
 
@@ -35,7 +33,6 @@ const q = new URLSearchParams({ startDate: DAY, endDate: DAY, country: 'US', pro
 const raw = await get('race/search?' + q);
 const all = Array.isArray(raw) ? raw : list(Object.values(raw).find(Array.isArray));
 
-// Filter to capture all federal marquee races (US Senate, US House, Governor) + all KY county elections
 const picked = all
   .filter((r) => String(r.election_date ?? '').slice(0, 10) === DAY)
   .filter(
@@ -45,21 +42,41 @@ const picked = all
       Boolean(r.district || r.municipality || r.region_results)
   );
 
-console.log(`search: ${all.length} total found, ${picked.length} KY & Federal marquee races selected`);
+console.log(`search: ${all.length} total found, ${picked.length} selected for processing`);
 
-const mc = (c) => ({ n: c.name, p: c.party, w: !!c.winner, col: c.color, v: num(c.votes), pc: num(c.percent) });
+const mc = (c) => ({
+  n: c.name,
+  p: c.party,
+  w: Boolean(c.winner || c.is_winner),
+  col: c.color,
+  v: num(c.votes),
+  pc: num(c.percent)
+});
 
 const one = async (m) => {
   const d = await get('race/' + m.id);
 
-  // Parse county regions if available
   const regions = list(d.region_results).map((r) => {
     const g = Array.isArray(r.region) ? r.region[0] : r.region || {};
+    const candsList = list(r.candidates).map(mc);
+    const regReporting = num(g.percent_reporting) || 0;
+    const regTotalVotes = candsList.reduce((acc, c) => acc + (c.v || 0), 0);
+    
+    // Estimate expected votes based on reporting percentage or registered voters
+    const regVoters = num(g.registered_voters);
+    let expectedVotes = regVoters ? Math.round(regVoters * 0.65) : null;
+    if (!expectedVotes && regReporting > 0) {
+      expectedVotes = Math.round((regTotalVotes / (regReporting / 100)));
+    }
+
     return {
       name: g.name || 'Unknown',
       type: g.type || 'County',
-      rep: num(g.percent_reporting),
-      c: list(r.candidates).map(mc)
+      rep: regReporting,
+      votes: regTotalVotes,
+      expectedVotes: expectedVotes || regTotalVotes,
+      c: candsList,
+      lastUpdated: new Date().toISOString()
     };
   });
 
@@ -74,16 +91,18 @@ const one = async (m) => {
     cands = Object.values(t);
   }
 
-  // Tag marquee federal/statewide races explicitly for UI filtering
   const lowerName = low(m.election_name);
   let raceCategory = m.type ?? m.election_type ?? 'State/Local';
   if (lowerName.includes('senate')) raceCategory = 'U.S. Senate';
   else if (lowerName.includes('governor')) raceCategory = 'Governor';
   else if (lowerName.includes('house') || lowerName.includes('congress')) raceCategory = 'U.S. House';
 
+  const reportingPct = num(d.percent_reporting ?? m.percent_reporting) || 0;
+  const isCalled = Boolean(d.is_called || cands.some(c => c.w));
+
   const historySnapshot = {
     timestamp: new Date().toISOString(),
-    reporting: num(d.percent_reporting ?? m.percent_reporting),
+    reporting: reportingPct,
     candidates: cands.map((c) => ({ n: c.n, v: c.v, pc: c.pc }))
   };
 
@@ -94,9 +113,9 @@ const one = async (m) => {
     type: raceCategory,
     district: m.district,
     muni: m.municipality,
-    pr: num(d.percent_reporting ?? m.percent_reporting),
+    pr: reportingPct,
     reg: num(d.registered_voters),
-    map: String(m.has_map) === 'true',
+    isCalled,
     cands,
     regions,
     history: [historySnapshot]
@@ -133,4 +152,4 @@ await writeFile(
   JSON.stringify({ updated: new Date().toISOString(), day: DAY, state: 'KY', failed, races }, null, 2)
 );
 
-console.log(`Successfully wrote ${races.length} races (including US Senate, US House, Governor) to data/races.json`);
+console.log(`Successfully wrote ${races.length} races to data/races.json`);
