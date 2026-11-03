@@ -67,9 +67,7 @@ jobs:
       - name: Download all worker artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: races-shard-*
-          path: data/
-          merge-multiple: true
+          path: shard-artifacts
 
       - name: Merge shard JSON files into data/races.json
         run: node scripts/merge.mjs
