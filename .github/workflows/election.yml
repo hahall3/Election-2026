@@ -1,0 +1,99 @@
+# Election 2026 Initiative — fetch, merge, build, deploy (GitHub Pages)
+name: Election 2026 Initiative Results
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [refresh-results]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: election-results
+  cancel-in-progress: false
+
+env:
+  TOTAL_WORKERS: 4
+  ELECTION_DAY: '2026-11-03'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Fetch shard
+        working-directory: ${{ github.workspace }}
+        env:
+          WORKER_ID: ${{ matrix.worker }}
+        run: node scripts/fetch.mjs
+
+      - name: Upload shard
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.worker }}
+          path: data/races-${{ matrix.worker }}.json
+          if-no-files-found: warn
+          retention-days: 1
+
+  build-deploy:
+    needs: fetch
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Download shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: shard-artifacts/
+
+      - name: Merge shards
+        working-directory: ${{ github.workspace }}
+        env:
+          PREVIOUS_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/races.json
+        run: node scripts/merge.mjs
+
+      - name: Build
+        working-directory: ${{ github.workspace }}
+        run: |
+          npm ci
+          npm run build
+          mkdir -p dist/data
+          cp data/races.json dist/data/races.json
+          node -e "const j=require('./dist/data/races.json');console.log('Publishing',j.count,'races updated',j.updated)"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'dist'
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
