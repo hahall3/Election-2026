@@ -50,7 +50,7 @@ jobs:
   fetch:
     needs: discover
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
@@ -70,8 +70,15 @@ jobs:
 
       - name: Fetch shard
         working-directory: ${{ github.workspace }}
+        timeout-minutes: 8
         env:
           WORKER_ID: ${{ matrix.worker }}
+          FETCH_CONCURRENCY: 2
+          FETCH_BUDGET_MS: 240000
+          REQUEST_TIMEOUT_MS: 20000
+          REQUEST_GAP_MS: 150
+          BREAKER_LIMIT: 25
+          MAX_RETRIES: 2
         run: node scripts/fetch.mjs
 
       - name: Upload shard
@@ -94,10 +101,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `cache: npm` here: setup-node fails hard when no lockfile is committed.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Download shards
         uses: actions/download-artifact@v4
@@ -109,11 +116,29 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: node scripts/merge.mjs
 
+      - name: Install dependencies
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ ! -f package.json ]; then
+            echo "::error::package.json not found in $(pwd). Files at repo root:"
+            ls -la
+            exit 1
+          fi
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            echo "::warning::No package-lock.json committed; using npm install. Commit a lockfile for reproducible builds."
+            npm install --no-audit --no-fund
+          fi
+
       - name: Build
         working-directory: ${{ github.workspace }}
         run: |
-          npm ci
           npm run build
+          if [ ! -d dist ]; then
+            echo "::error::Build did not produce dist/. Check build.outDir in vite.config.js."
+            exit 1
+          fi
           mkdir -p dist/data
           cp data/races.json dist/data/races.json
           node -e "const j=require('./dist/data/races.json');console.log('Publishing',j.count,'races updated',j.updated)"
