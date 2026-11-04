@@ -112,6 +112,6 @@ if (!races.length && prevById.size) {
 await mkdir(dirname(OUT), { recursive: true });
 await writeFile(
   OUT,
-  JSON.stringify({ updated: now, day: shards[0](https://citation-placeholder)?.day ?? null, count: races.length, changed, carried, races }) + '\n'
+  JSON.stringify({ updated: now, day: shards.at(0)?.day ?? null, count: races.length, changed, carried, races }) + '\n'
 );
 console.log(`Merged ${races.length} races (${changed} changed, ${carried} carried forward) -> ${OUT}`);
